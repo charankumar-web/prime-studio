@@ -6,17 +6,20 @@ import dynamic from 'next/dynamic';
 // Monaco editor client-only
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
-/* ---------------------------------------------------
-   REQUIRE REAL ZOHO CLIQ SDK (NO LOCAL MOCK)
---------------------------------------------------- */
-const cliq =
-  typeof window !== 'undefined' && (window as any).$cliq
-    ? (window as any).$cliq
-    : null;
+// ---------- Mock / wrapper for $cliq so app runs locally ----------
+let cliq: any;
+if (typeof window !== 'undefined' && (window as any).$cliq) {
+  cliq = (window as any).$cliq;
+} else {
+  cliq = {
+    user: { get: async () => ({ first_name: 'LocalUser' }) },
+    sendMessage: (m: any) => alert('Mock sendMessage:\n\n' + (m?.text ?? JSON.stringify(m))),
+    sendFile: (_: File) => alert('Mock sendFile called'),
+    on: (_event: string, _cb: Function) => { /* noop for local */ },
+  };
+}
 
-/* ---------------------------------------------------
-   STARTER CODE TEMPLATES
---------------------------------------------------- */
+// ---------- Starter templates for each language ----------
 const languageTemplates: Record<string, string> = {
   javascript: `// JavaScript Starter
 console.log("Hello from JavaScript!");`,
@@ -49,11 +52,8 @@ int main() {
 `,
 };
 
-const personalDefaultFor = (lang: string) => languageTemplates[lang];
+const personalDefaultFor = (lang: string) => languageTemplates[lang] ?? '// Start coding';
 
-/* ---------------------------------------------------
-   PAGE COMPONENT
---------------------------------------------------- */
 export default function Page() {
   const [mode, setMode] = useState<'personal' | 'team'>('personal');
   const [language, setLanguage] = useState<string>('javascript');
@@ -61,61 +61,89 @@ export default function Page() {
   const [output, setOutput] = useState<string>('');
   const [teamInfo, setTeamInfo] = useState<any>(null);
   const [teamBaseline, setTeamBaseline] = useState<string>('');
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState<boolean>(false);
 
-  /* ---------------------------------------------------
-     TEAM WORKSPACE LOAD
-  --------------------------------------------------- */
-  const loadTeamWorkspace = async () => {
-    const res = await fetch('/api/team');
-    const data = await res.json();
-    const content = data?.content ?? personalDefaultFor(data?.language ?? 'javascript');
-    const lang = data?.language ?? 'javascript';
+  /* ---------------------- RESIZABLE TERMINAL ---------------------- */
+  const [terminalHeight, setTerminalHeight] = useState(200);
+  const [isResizing, setIsResizing] = useState(false);
 
-    setTeamInfo(data);
-    setTeamBaseline(content);
-    setLanguage(lang);
-    setCode(content);
+  const startResize = () => setIsResizing(true);
+  const stopResize = () => setIsResizing(false);
+
+  const handleResize = (e: any) => {
+    if (isResizing) {
+      setTerminalHeight(window.innerHeight - e.clientY - 70);
+    }
   };
 
-  /* ---------------------------------------------------
-     LEAVE WARNING (widget.close & beforeunload)
-  --------------------------------------------------- */
   useEffect(() => {
-    const shouldWarn = () => {
-      if (mode === 'personal')
-        return code.trim() !== personalDefaultFor(language).trim();
-      return code.trim() !== teamBaseline.trim();
+    window.addEventListener("mousemove", handleResize);
+    window.addEventListener("mouseup", stopResize);
+
+    return () => {
+      window.removeEventListener("mousemove", handleResize);
+      window.removeEventListener("mouseup", stopResize);
     };
+  }, [isResizing]);
 
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (!shouldWarn()) return;
-      e.preventDefault();
-      e.returnValue = '';
-      return '';
+  /* ---------------- load team workspace ---------------- */
+  const loadTeamWorkspace = async () => {
+    try {
+      const res = await fetch('/api/team');
+      const data = await res.json();
+      const content = data?.content ?? personalDefaultFor(data?.language ?? 'javascript');
+      const lang = data?.language ?? 'javascript';
+      setTeamInfo(data ?? null);
+      setTeamBaseline(content.toString());
+      setLanguage(lang);
+      setCode(content.toString());
+    } catch (err) {
+      console.error('loadTeamWorkspace error', err);
+    }
+  };
+
+  const personalIsModified = (lang = language, cur = code) => {
+    return (cur ?? '').toString().trim() !== (personalDefaultFor(lang) ?? '').toString().trim();
+  };
+
+  const teamIsModified = (cur = code) => {
+    return (cur ?? '').toString().trim() !== (teamBaseline ?? '').toString().trim();
+  };
+
+  const shouldWarnOnLeave = () => {
+    if (mode === 'personal') return personalIsModified();
+    return teamIsModified();
+  };
+
+  /* --------------- beforeunload + widget.close handling --------------- */
+  useEffect(() => {
+    const onBefore = (e: BeforeUnloadEvent) => {
+      if (shouldWarnOnLeave()) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+      return undefined;
     };
+    window.addEventListener('beforeunload', onBefore);
 
-    window.addEventListener('beforeunload', onBeforeUnload);
-
-    if (cliq) {
+    try {
       cliq.on('widget.close', () => {
-        if (shouldWarn()) {
-          const ok = confirm('You have unsaved changes. Close anyway?');
+        if (shouldWarnOnLeave()) {
+          const ok = confirm('You have unsaved changes. Leaving will discard them. Continue?');
           if (!ok) throw new Error('CANCEL_CLOSE');
         }
       });
-    }
+    } catch {}
 
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [code, mode, teamBaseline, language]);
+    return () => window.removeEventListener('beforeunload', onBefore);
+  }, [mode, code, teamBaseline]);
 
-  /* ---------------------------------------------------
-     MODE SWITCHING
---------------------------------------------------- */
+  /* ---------------- switching workspaces ---------------- */
   const switchToPersonal = () => {
-    if (mode === 'team' && code.trim() !== teamBaseline.trim()) {
+    if (mode === 'team' && teamIsModified()) {
       const ok = confirm(
-        "You have unsaved TEAM workspace changes.\nSwitching will discard them.\n\nContinue?"
+        "You have unsaved changes in the Team Workspace.\nIf you switch to Personal Workspace now, those unsaved changes will be lost.\nClick 'Save to Team' to keep them.\n\nDo you want to continue?"
       );
       if (!ok) return;
     }
@@ -124,9 +152,9 @@ export default function Page() {
   };
 
   const switchToTeam = async () => {
-    if (mode === 'personal' && code.trim() !== personalDefaultFor(language).trim()) {
+    if (mode === 'personal' && personalIsModified()) {
       const ok = confirm(
-        "Your personal code will be deleted if you switch.\nSave or share it first.\n\nContinue?"
+        "If you switch to Team Workspace now, your PERSONAL code (unsaved) will be deleted.\nSave or Share before switching.\n\nDo you want to continue?"
       );
       if (!ok) return;
     }
@@ -134,80 +162,85 @@ export default function Page() {
     await loadTeamWorkspace();
   };
 
-  /* ---------------------------------------------------
-     SAVE / DELETE TEAM WORKSPACE
---------------------------------------------------- */
+  /* ---------------- save / delete team ---------------- */
   const saveToTeam = async () => {
-    const user = await cliq?.user.get();
-    const name = user?.first_name ?? 'Unknown';
-
-    await fetch('/api/team', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: code, language, modifiedBy: name }),
-    });
-
-    await loadTeamWorkspace();
-    alert('Saved to team ✔');
+    try {
+      const user = (await cliq.user.get()) ?? { first_name: 'Unknown' };
+      await fetch('/api/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: code, language, modifiedBy: user.first_name ?? 'Unknown' }),
+      });
+      await loadTeamWorkspace();
+      alert('Saved to team ✔');
+    } catch (err) {
+      console.error('saveToTeam err', err);
+      alert('Save failed; check console.');
+    }
   };
 
   const deleteTeam = async () => {
-    if (!confirm('Delete team workspace?')) return;
-
+    const ok = confirm('Are you sure you want to delete the Team Workspace?');
+    if (!ok) return;
     await fetch('/api/team', { method: 'DELETE' });
     await loadTeamWorkspace();
-    alert('Workspace reset ✔');
+    alert('Team workspace deleted and reset to default.');
   };
 
-  /* ---------------------------------------------------
-     LANGUAGE CHANGE
---------------------------------------------------- */
+  /* ---------------- language change handler ---------------- */
   const handleLanguageChange = (newLang: string) => {
     if (newLang === language) return;
 
-    if (mode === 'personal' && code.trim() !== personalDefaultFor(language).trim()) {
-      const ok = confirm(
-        "Switching languages will delete your current PERSONAL code.\nSave/share it first.\n\nContinue?"
-      );
-      if (!ok) return;
+    if (mode === 'personal') {
+      if (personalIsModified()) {
+        const ok = confirm(
+          "Switching languages will CLEAR your current personal code unless you save or share it.\nSave to file or share to chat before switching.\n\nContinue?"
+        );
+        if (!ok) return;
+      }
+      setLanguage(newLang);
+      setCode(personalDefaultFor(newLang));
+      return;
     }
 
-    if (mode === 'team' && code.trim() !== teamBaseline.trim()) {
-      const ok = confirm(
-        "Unsaved TEAM workspace changes will be lost.\nSave to Team first.\n\nContinue?"
-      );
-      if (!ok) return;
+    if (mode === 'team') {
+      if (teamIsModified()) {
+        const ok = confirm(
+          "You have unsaved changes in the Team Workspace.\nSwitching language will discard them.\n\nContinue?"
+        );
+        if (!ok) return;
+      }
+      setLanguage(newLang);
+      setCode(personalDefaultFor(newLang));
+      return;
     }
-
-    setLanguage(newLang);
-    setCode(personalDefaultFor(newLang));
   };
 
-  /* ---------------------------------------------------
-     SHARE & SAVE FILE
---------------------------------------------------- */
+  /* ---------------- share / save file ---------------- */
   const shareToChat = () => {
-    if (!cliq) return alert('Not running inside Zoho Cliq.');
-
-    cliq.sendMessage({
-      text: `Code (${language}):\n\`\`\`${language}\n${code}\n\`\`\``,
-    });
+    cliq.sendMessage({ text: `Code (${language}):\n\`\`\`${language}\n${code}\n\`\`\`` });
+    alert('Shared to chat (mock/local).');
   };
 
-  const saveFile = async () => {
-    if (!cliq) return alert('Not inside Zoho Cliq.');
-
+  const saveFile = () => {
     const filename = prompt('File name:', `main.${language}`);
     if (!filename) return;
 
     const blob = new Blob([code], { type: 'text/plain' });
+
+    if (!(window as any).$cliq) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      return;
+    }
+
     const file = new File([blob], filename);
-    await cliq.sendFile(file);
+    cliq.sendFile(file);
   };
 
-  /* ---------------------------------------------------
-     RUN CODE
---------------------------------------------------- */
+  /* ---------------- run code ---------------- */
   const runCode = async () => {
     setRunning(true);
     setOutput('Running...');
@@ -218,54 +251,55 @@ export default function Page() {
         const sandbox = { console: { log: (m: any) => logs.push(String(m)) } };
         new Function('sandbox', `with(sandbox){ ${code} }`)(sandbox);
         setOutput(logs.join('\n') || '(no output)');
-      } else {
-        const res = await fetch('/api/compile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ language, code }),
-        });
-
-        const data = await res.json();
-        setOutput(data.output || '(empty output)');
+        setRunning(false);
+        return;
       }
+
+      const res = await fetch('/api/compile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language, code }),
+      });
+
+      const data = await res.json();
+      setOutput(data.output || '(empty output)');
     } catch (err: any) {
-      setOutput(err.message);
+      setOutput(`Error: ${err.message}`);
     }
 
     setRunning(false);
   };
 
-  /* ---------------------------------------------------
-     UI
---------------------------------------------------- */
+  /* ---------------- UI ---------------- */
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0f0f10' }}>
-      
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
+      width: '100%',
+      background: '#0f0f10',
+      color: '#ddd',
+    }}>
       {/* TOP BAR */}
       <div style={{
         display: 'flex',
-        flexWrap: 'wrap',
         gap: 10,
-        padding: 12,
-        background: '#1c1c1c',
-        color: '#fff',
         alignItems: 'center',
+        padding: '10px',
+        background: '#3a3a3d',
+        flexWrap: 'wrap',
       }}>
-        <button onClick={switchToPersonal} style={mode === 'personal' ? primaryBtn : secondaryBtn}>
-          Personal
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={switchToPersonal} style={mode === 'personal' ? primaryBtn : secondaryBtn}>Personal</button>
+          <button onClick={switchToTeam} style={mode === 'team' ? primaryBtn : secondaryBtn}>Team</button>
+        </div>
 
-        <button onClick={switchToTeam} style={mode === 'team' ? primaryBtn : secondaryBtn}>
-          Team
-        </button>
-
-        {/* Language Select */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>Language:</span>
+        <div style={{ display: 'flex', gap: 8, marginLeft: 15 }}>
+          <label style={{ color: '#ccc' }}>Language:</label>
           <select
             value={language}
             onChange={(e) => handleLanguageChange(e.target.value)}
-            style={{ padding: '6px 10px', borderRadius: 6, background: '#111', color: '#fff' }}
+            style={{ padding: '6px', background: '#101014', color: '#fff', borderRadius: 6, border: '1px solid #333' }}
           >
             <option value="javascript">JavaScript</option>
             <option value="python">Python</option>
@@ -275,8 +309,8 @@ export default function Page() {
           </select>
         </div>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
-          <button onClick={runCode} style={actionBtn}>{running ? 'Running...' : 'Run ▶'}</button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button onClick={runCode} disabled={running} style={actionBtn}>{running ? 'Running...' : 'Run ▶'}</button>
 
           {mode === 'team' && (
             <>
@@ -290,16 +324,16 @@ export default function Page() {
         </div>
       </div>
 
-      {/* LAST MODIFIED */}
       {mode === 'team' && teamInfo?.modifiedBy && (
-        <div style={{ padding: 8, background: '#0b0b0c', color: '#aaa' }}>
-          📝 Last saved by {teamInfo.modifiedBy} — {new Date(teamInfo.modifiedAt).toLocaleString()}
-          {code.trim() !== teamBaseline.trim() && <span style={{ color: '#ffd54f' }}> • Unsaved changes</span>}
+        <div style={{ padding: 8, background: '#0b0b0c', fontSize: 13, color: '#999' }}>
+          Last saved by <strong style={{ color: '#fff' }}>{teamInfo.modifiedBy}</strong>
+          {teamInfo.modifiedAt && ` at ${new Date(teamInfo.modifiedAt).toLocaleString()}`}
+          {teamIsModified() && <span style={{ marginLeft: 8, color: '#ffb74d' }}>• Unsaved changes</span>}
         </div>
       )}
 
       {/* EDITOR */}
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, minHeight: 150 }}>
         <Editor
           height="100%"
           value={code}
@@ -310,52 +344,43 @@ export default function Page() {
         />
       </div>
 
+      {/* === RESIZE BAR === */}
+      <div
+        onMouseDown={startResize}
+        style={{
+          height: "6px",
+          background: "#444",
+          cursor: "row-resize",
+        }}
+      ></div>
+
       {/* OUTPUT */}
       <div style={{
-        height: '28%',
+        height: terminalHeight,
+        minHeight: 100,
         background: '#000',
         color: '#00e676',
         padding: 12,
         fontFamily: 'monospace',
-        overflow: 'auto',
+        overflowY: 'auto',
       }}>
-        <strong style={{ color: '#4caf50' }}>Output:</strong>
-        <pre style={{ marginTop: 10 }}>{output}</pre>
+        <div style={{ color: '#4caf50', fontWeight: 700 }}>Output:</div>
+        <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{output || '(no output)'}</pre>
       </div>
     </div>
   );
 }
 
-/* BUTTON STYLES */
+/* ---------------- styles ---------------- */
 const primaryBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#007acc',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
+  padding: '8px 12px', borderRadius: 6, background: '#0b84ff', color: '#fff', border: 'none', cursor: 'pointer'
 };
 const secondaryBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#333',
-  color: '#fff',
-  border: '1px solid #444',
-  borderRadius: 6,
-  cursor: 'pointer',
+  padding: '8px 12px', borderRadius: 6, background: '#2b2b2b', color: '#fff', border: '1px solid #333', cursor: 'pointer'
 };
 const actionBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#005fb8',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
+  padding: '8px 12px', borderRadius: 6, background: '#007acc', color: '#fff', border: 'none', cursor: 'pointer'
 };
 const dangerBtn: React.CSSProperties = {
-  padding: '8px 14px',
-  background: '#d32f2f',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
+  padding: '8px 12px', borderRadius: 6, background: '#d32f2f', color: '#fff', border: 'none', cursor: 'pointer'
 };
