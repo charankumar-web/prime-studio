@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* ======================================
+   THEME VARIABLES
+   ====================================== */
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -19,6 +22,18 @@
   }
 }
 
+/* ======================================
+   GLOBAL BODY STYLING
+   ====================================== */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ======================================
+   FADE ANIMATION (Saved Successfully)
+   ====================================== */
 @keyframes fadeInOut {
   0% { opacity: 0; transform: scale(0.9); }
   10% { opacity: 1; transform: scale(1); }
@@ -30,9 +45,49 @@
   animation: fadeInOut 2s ease-in-out forwards;
 }
 
+/* ======================================
+   MONACO EDITOR UI IMPROVEMENTS
+   ====================================== */
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Darker editor background */
+.monaco-editor, 
+.monaco-editor .overflow-guard {
+  background-color: #0b0f12 !important;
+}
+
+/* Make editor text crisper */
+.monaco-editor .view-lines * {
+  font-weight: 600 !important;
+}
+
+/* Make line numbers brighter and bold */
+.monaco-editor .margin,
+.monaco-editor .margin * {
+  color: #c0c0c0 !important;
+  font-weight: 700 !important;
+}
+
+/* Darken the scrollbars (optional) */
+.monaco-scrollable-element > .scrollbar > .slider {
+  background: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* Active line highlight stronger */
+.monaco-editor .current-line {
+  border-color: #2f81f7 !important;
+}
+
+/* Remove extra Monaco padding */
+.monaco-editor .view-overlays .current-line {
+  margin-bottom: 0 !important;
+}
+
+/* Remove scroll beyond last line extra gap */
+.monaco-editor.scroll-decoration {
+  box-shadow: none !important;
+}
+
+/* Cursor thicker */
+.monaco-editor .cursor {
+  border-left-width: 2px !important;
 }
