@@ -1,386 +1,376 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
+import React, { useState, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 
-// Monaco editor client-only
-const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
+// Monaco Editor without SSR
+const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
-// ---------- Mock / wrapper for $cliq so app runs locally ----------
-let cliq: any;
-if (typeof window !== 'undefined' && (window as any).$cliq) {
-  cliq = (window as any).$cliq;
-} else {
-  cliq = {
-    user: { get: async () => ({ first_name: 'LocalUser' }) },
-    sendMessage: (m: any) => alert('Mock sendMessage:\n\n' + (m?.text ?? JSON.stringify(m))),
-    sendFile: (_: File) => alert('Mock sendFile called'),
-    on: (_event: string, _cb: Function) => { /* noop for local */ },
-  };
-}
-
-// ---------- Starter templates for each language ----------
-const languageTemplates: Record<string, string> = {
-  javascript: `// JavaScript Starter
-console.log("Hello from JavaScript!");`,
-
-  python: `# Python Starter
-print("Hello from Python!")`,
-
-  c: `#include <stdio.h>
+export default function Page() {
+  // ----------------------------
+  // Default templates
+  // ----------------------------
+  const defaultCode: Record<string, string> = {
+    python: `print("Hello, world!")`,
+    javascript: `console.log("Hello, world!");`,
+    java: `public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello, world!");
+    }
+}`,
+    c: `#include <stdio.h>
 
 int main() {
-    printf("Hello from C!\\n");
+    printf("Hello, world!");
     return 0;
-}
-`,
-
-  cpp: `#include <iostream>
+}`,
+    "c++": `#include <iostream>
 using namespace std;
 
 int main() {
-    cout << "Hello from C++!" << endl;
+    cout << "Hello, world!";
     return 0;
-}
-`,
-
-  java: `public class Main {
-    public static void main(String[] args) {
-        System.out.println("Hello from Java!");
-    }
-}
-`,
-};
-
-const personalDefaultFor = (lang: string) => languageTemplates[lang] ?? '// Start coding';
-
-export default function Page() {
-  const [mode, setMode] = useState<'personal' | 'team'>('personal');
-  const [language, setLanguage] = useState<string>('javascript');
-  const [code, setCode] = useState<string>(personalDefaultFor('javascript'));
-  const [output, setOutput] = useState<string>('');
-  const [teamInfo, setTeamInfo] = useState<any>(null);
-  const [teamBaseline, setTeamBaseline] = useState<string>('');
-  const [running, setRunning] = useState<boolean>(false);
-
-  /* ---------------------- RESIZABLE TERMINAL ---------------------- */
-  const [terminalHeight, setTerminalHeight] = useState(200);
-  const [isResizing, setIsResizing] = useState(false);
-
-  const startResize = () => setIsResizing(true);
-  const stopResize = () => setIsResizing(false);
-
-  const handleResize = (e: any) => {
-    if (isResizing) {
-      setTerminalHeight(window.innerHeight - e.clientY - 70);
-    }
+}`
   };
 
+  // ----------------------------
+  // State
+  // ----------------------------
+  const [language, setLanguage] = useState<string>("python");
+  const [code, setCode] = useState<string>(defaultCode["python"]);
+  const [output, setOutput] = useState<string>("Output will appear here...");
+  const [savedData, setSavedData] = useState<{ language: string; code: string }>({
+    language: "",
+    code: ""
+  });
+  const [isLoaded, setIsLoaded] = useState(false);
+  const isSavingRef = useRef(false);
+
+  // Helper: detect unsaved changes
+  const hasUnsavedChanges = (): boolean => {
+    return isLoaded && (code !== (savedData.code ?? "") || language !== (savedData.language ?? ""));
+  };
+
+  // ----------------------------
+  // Load saved code on mount
+  // ----------------------------
   useEffect(() => {
-    window.addEventListener("mousemove", handleResize);
-    window.addEventListener("mouseup", stopResize);
-
-    return () => {
-      window.removeEventListener("mousemove", handleResize);
-      window.removeEventListener("mouseup", stopResize);
-    };
-  }, [isResizing]);
-
-  /* ---------------- load team workspace ---------------- */
-  const loadTeamWorkspace = async () => {
-    try {
-      const res = await fetch('/api/team');
-      const data = await res.json();
-      const content = data?.content ?? personalDefaultFor(data?.language ?? 'javascript');
-      const lang = data?.language ?? 'javascript';
-      setTeamInfo(data ?? null);
-      setTeamBaseline(content.toString());
-      setLanguage(lang);
-      setCode(content.toString());
-    } catch (err) {
-      console.error('loadTeamWorkspace error', err);
-    }
-  };
-
-  const personalIsModified = (lang = language, cur = code) => {
-    return (cur ?? '').toString().trim() !== (personalDefaultFor(lang) ?? '').toString().trim();
-  };
-
-  const teamIsModified = (cur = code) => {
-    return (cur ?? '').toString().trim() !== (teamBaseline ?? '').toString().trim();
-  };
-
-  const shouldWarnOnLeave = () => {
-    if (mode === 'personal') return personalIsModified();
-    return teamIsModified();
-  };
-
-  /* --------------- beforeunload + widget.close handling --------------- */
-  useEffect(() => {
-    const onBefore = (e: BeforeUnloadEvent) => {
-      if (shouldWarnOnLeave()) {
-        e.preventDefault();
-        e.returnValue = '';
-        return '';
-      }
-      return undefined;
-    };
-    window.addEventListener('beforeunload', onBefore);
-
-    try {
-      cliq.on('widget.close', () => {
-        if (shouldWarnOnLeave()) {
-          const ok = confirm('You have unsaved changes. Leaving will discard them. Continue?');
-          if (!ok) throw new Error('CANCEL_CLOSE');
+    let mounted = true;
+    async function load() {
+      try {
+        const res = await fetch("/api/save");
+        if (!res.ok) {
+          // If endpoint missing or returns error, keep defaults
+          setIsLoaded(true);
+          return;
         }
-      });
-    } catch {}
+        const data = await res.json();
+        if (!mounted) return;
 
-    return () => window.removeEventListener('beforeunload', onBefore);
-  }, [mode, code, teamBaseline]);
-
-  /* ---------------- switching workspaces ---------------- */
-  const switchToPersonal = () => {
-    if (mode === 'team' && teamIsModified()) {
-      const ok = confirm(
-        "You have unsaved changes in the Team Workspace.\nIf you switch to Personal Workspace now, those unsaved changes will be lost.\nClick 'Save to Team' to keep them.\n\nDo you want to continue?"
-      );
-      if (!ok) return;
-    }
-    setMode('personal');
-    setCode(personalDefaultFor(language));
-  };
-
-  const switchToTeam = async () => {
-    if (mode === 'personal' && personalIsModified()) {
-      const ok = confirm(
-        "If you switch to Team Workspace now, your PERSONAL code (unsaved) will be deleted.\nSave or Share before switching.\n\nDo you want to continue?"
-      );
-      if (!ok) return;
-    }
-    setMode('team');
-    await loadTeamWorkspace();
-  };
-
-  /* ---------------- save / delete team ---------------- */
-  const saveToTeam = async () => {
-    try {
-      const user = (await cliq.user.get()) ?? { first_name: 'Unknown' };
-      await fetch('/api/team', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: code, language, modifiedBy: user.first_name ?? 'Unknown' }),
-      });
-      await loadTeamWorkspace();
-      alert('Saved to team ✔');
-    } catch (err) {
-      console.error('saveToTeam err', err);
-      alert('Save failed; check console.');
-    }
-  };
-
-  const deleteTeam = async () => {
-    const ok = confirm('Are you sure you want to delete the Team Workspace?');
-    if (!ok) return;
-    await fetch('/api/team', { method: 'DELETE' });
-    await loadTeamWorkspace();
-    alert('Team workspace deleted and reset to default.');
-  };
-
-  /* ---------------- language change handler ---------------- */
-  const handleLanguageChange = (newLang: string) => {
-    if (newLang === language) return;
-
-    if (mode === 'personal') {
-      if (personalIsModified()) {
-        const ok = confirm(
-          "Switching languages will CLEAR your current personal code unless you save or share it.\nSave to file or share to chat before switching.\n\nContinue?"
-        );
-        if (!ok) return;
+        if (data && data.code && data.code.trim() !== "") {
+          setLanguage(data.language || "python");
+          setCode(data.code);
+          setSavedData({ language: data.language || "python", code: data.code });
+        } else {
+          // No saved code -> keep default based on default language
+          setLanguage((data?.language as string) || "python");
+          // If server only provides language but no code, show default
+          setCode(defaultCode[(data?.language as string) || "python"]);
+        }
+      } catch (err) {
+        // ignore, keep defaults
+      } finally {
+        if (mounted) setIsLoaded(true);
       }
-      setLanguage(newLang);
-      setCode(personalDefaultFor(newLang));
-      return;
     }
+    load();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    if (mode === 'team') {
-      if (teamIsModified()) {
-        const ok = confirm(
-          "You have unsaved changes in the Team Workspace.\nSwitching language will discard them.\n\nContinue?"
-        );
-        if (!ok) return;
+  // ----------------------------
+  // Before unload: warn if unsaved
+  // ----------------------------
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges()) {
+        e.preventDefault();
+        e.returnValue = "";
       }
-      setLanguage(newLang);
-      setCode(personalDefaultFor(newLang));
-      return;
-    }
-  };
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [code, language, savedData, isLoaded]);
 
-  /* ---------------- share / save file ---------------- */
-  const shareToChat = () => {
-    cliq.sendMessage({ text: `Code (${language}):\n\`\`\`${language}\n${code}\n\`\`\`` });
-    alert('Shared to chat (mock/local).');
-  };
-
-  const saveFile = () => {
-    const filename = prompt('File name:', `main.${language}`);
-    if (!filename) return;
-
-    const blob = new Blob([code], { type: 'text/plain' });
-
-    if (!(window as any).$cliq) {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      return;
-    }
-
-    const file = new File([blob], filename);
-    cliq.sendFile(file);
-  };
-
-  /* ---------------- run code ---------------- */
+  // ----------------------------
+  // Run code (uses your compile endpoint)
+  // ----------------------------
   const runCode = async () => {
-    setRunning(true);
-    setOutput('Running...');
-
     try {
-      if (language === 'javascript') {
-        const logs: string[] = [];
-        const sandbox = { console: { log: (m: any) => logs.push(String(m)) } };
-        new Function('sandbox', `with(sandbox){ ${code} }`)(sandbox);
-        setOutput(logs.join('\n') || '(no output)');
-        setRunning(false);
-        return;
-      }
-
-      const res = await fetch('/api/compile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language, code }),
+      setOutput("⏳ Running...");
+      const res = await fetch("/api/compile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, code })
       });
-
       const data = await res.json();
-      setOutput(data.output || '(empty output)');
+      if (data.error) return setOutput("❌ Error:\n" + data.error);
+      setOutput(data.output || "(empty output)");
     } catch (err: any) {
-      setOutput(`Error: ${err.message}`);
+      setOutput("🔥 Failed to run:\n" + (err?.message ?? String(err)));
     }
-
-    setRunning(false);
   };
 
-  /* ---------------- UI ---------------- */
+  // ----------------------------
+  // Save to server
+  // ----------------------------
+  const saveCodeToServer = async () => {
+    try {
+      isSavingRef.current = true;
+      const res = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, code })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSavedData({ language, code });
+        alert("Saved to server.");
+      } else {
+        alert("Save failed: " + (data.error || "unknown"));
+      }
+    } catch (err: any) {
+      alert("Save failed: " + (err?.message ?? String(err)));
+    } finally {
+      isSavingRef.current = false;
+    }
+  };
+
+  // ----------------------------
+  // Language change with unsaved prompt
+  // ----------------------------
+  const handleLanguageChange = async (newLang: string) => {
+    // If nothing loaded yet, just set
+    if (!isLoaded) {
+      setLanguage(newLang);
+      setCode(defaultCode[newLang]);
+      return;
+    }
+
+    if (!hasUnsavedChanges()) {
+      setLanguage(newLang);
+      // load last saved for that language if server savedData matches, else default
+      if (savedData.language === newLang && savedData.code) {
+        setCode(savedData.code);
+      } else {
+        setCode(defaultCode[newLang]);
+      }
+      return;
+    }
+
+    // There are unsaved changes -> prompt user
+    const doSave = confirm("You have unsaved changes. Press OK to SAVE, Cancel to DISCARD.");
+    if (doSave) {
+      await saveCodeToServer();
+      // after save, switch language
+      setLanguage(newLang);
+      // load saved for the new language if exists, else default
+      if (savedData.language === newLang && savedData.code) {
+        setCode(savedData.code);
+      } else {
+        setCode(defaultCode[newLang]);
+      }
+    } else {
+      // user chose cancel in confirm -> we treat as discard (per above message)
+      const discard = confirm("Discard changes and switch language? Press OK to discard, Cancel to stay.");
+      if (discard) {
+        setLanguage(newLang);
+        if (savedData.language === newLang && savedData.code) {
+          setCode(savedData.code);
+        } else {
+          setCode(defaultCode[newLang]);
+        }
+      } else {
+        // user canceled -> do nothing (stay on same language)
+      }
+    }
+  };
+
+  // ----------------------------
+  // Save-as-download (optional) kept for compatibility
+  // ----------------------------
+  const downloadLocalCopy = () => {
+    const extMap: Record<string, string> = {
+      python: ".py",
+      java: ".java",
+      c: ".c",
+      "c++": ".cpp",
+      javascript: ".js"
+    };
+    const ext = extMap[language] || ".txt";
+    const blob = new Blob([code], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "code" + ext;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const bgUrl = "/sl_031420_28950_10.jpg";
+
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100vh',
-      width: '100%',
-      background: '#0f0f10',
-      color: '#ddd',
-    }}>
-      {/* TOP BAR */}
-      <div style={{
-        display: 'flex',
-        gap: 10,
-        alignItems: 'center',
-        padding: '10px',
-        background: '#3a3a3d',
-        flexWrap: 'wrap',
-      }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={switchToPersonal} style={mode === 'personal' ? primaryBtn : secondaryBtn}>Personal</button>
-          <button onClick={switchToTeam} style={mode === 'team' ? primaryBtn : secondaryBtn}>Team</button>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, marginLeft: 15 }}>
-          <label style={{ color: '#ccc' }}>Language:</label>
-          <select
-            value={language}
-            onChange={(e) => handleLanguageChange(e.target.value)}
-            style={{ padding: '6px', background: '#101014', color: '#fff', borderRadius: 6, border: '1px solid #333' }}
-          >
-            <option value="javascript">JavaScript</option>
-            <option value="python">Python</option>
-            <option value="c">C</option>
-            <option value="cpp">C++</option>
-            <option value="java">Java</option>
-          </select>
-        </div>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button onClick={runCode} disabled={running} style={actionBtn}>{running ? 'Running...' : 'Run ▶'}</button>
-
-          {mode === 'team' && (
-            <>
-              <button onClick={saveToTeam} style={actionBtn}>Save to Team</button>
-              <button onClick={deleteTeam} style={dangerBtn}>Delete</button>
-            </>
-          )}
-
-          <button onClick={shareToChat} style={actionBtn}>Share</button>
-          <button onClick={saveFile} style={actionBtn}>Save File</button>
-        </div>
-      </div>
-
-      {mode === 'team' && teamInfo?.modifiedBy && (
-        <div style={{ padding: 8, background: '#0b0b0c', fontSize: 13, color: '#999' }}>
-          Last saved by <strong style={{ color: '#fff' }}>{teamInfo.modifiedBy}</strong>
-          {teamInfo.modifiedAt && ` at ${new Date(teamInfo.modifiedAt).toLocaleString()}`}
-          {teamIsModified() && <span style={{ marginLeft: 8, color: '#ffb74d' }}>• Unsaved changes</span>}
-        </div>
-      )}
-
-      {/* EDITOR */}
-      <div style={{ flex: 1, minHeight: 150 }}>
-        <Editor
-          height="100%"
-          value={code}
-          language={language}
-          theme="vs-dark"
-          options={{ minimap: { enabled: false }, fontSize: 14 }}
-          onChange={(v) => setCode(v ?? '')}
-        />
-      </div>
-
-      {/* === RESIZE BAR === */}
+    <div
+      className="relative w-screen h-screen overflow-hidden text-white"
+      style={{ fontFamily: "Inter, system-ui, sans-serif" }}
+    >
+      {/* Background */}
       <div
-        onMouseDown={startResize}
+        className="absolute inset-0 bg-cover bg-center"
         style={{
-          height: "6px",
-          background: "#444",
-          cursor: "row-resize",
+          backgroundImage: `url('${bgUrl}')`,
+          filter: "brightness(0.35) contrast(1.05)"
         }}
-      ></div>
+      />
 
-      {/* OUTPUT */}
-      <div style={{
-        height: terminalHeight,
-        minHeight: 100,
-        background: '#000',
-        color: '#00e676',
-        padding: 12,
-        fontFamily: 'monospace',
-        overflowY: 'auto',
-      }}>
-        <div style={{ color: '#4caf50', fontWeight: 700 }}>Output:</div>
-        <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{output || '(no output)'}</pre>
+      {/* Dark Overlay */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: "linear-gradient(180deg, rgba(2,6,23,0.2), rgba(2,6,23,0.55))"
+        }}
+      />
+
+      {/* Main */}
+      <div className="relative z-10 flex items-center justify-center h-full px-6">
+        <div
+          className="w-full max-w-5xl rounded-2xl shadow-2xl backdrop-blur-md bg-gradient-to-r from-white/6 to-white/3 border border-white/10 overflow-hidden"
+          style={{ minHeight: 420 }}
+        >
+          {/* Toolbar */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/8">
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 rounded-full bg-red-400" />
+              <div className="w-3 h-3 rounded-full bg-yellow-400" />
+              <div className="w-3 h-3 rounded-full bg-green-400" />
+
+              <select
+                value={language}
+                onChange={(e) => handleLanguageChange(e.target.value)}
+                className="ml-4 bg-white/50 text-sm text-gray-700 rounded-md px-2 py-1 backdrop-blur-md focus:outline-none"
+              >
+                <option value="python">Python</option>
+                <option value="java">Java</option>
+                <option value="c">C</option>
+                <option value="c++">C++</option>
+                <option value="javascript">JavaScript</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={runCode}
+                className="px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-sm"
+              >
+                Run
+              </button>
+              <button
+                onClick={saveCodeToServer}
+                className="px-3 py-1 rounded-md bg-gray-800/60 hover:bg-gray-800/50 text-white text-sm"
+              >
+                Save
+              </button>
+              <button
+                onClick={downloadLocalCopy}
+                className="px-3 py-1 rounded-md bg-gray-700/50 hover:bg-gray-700/40 text-white text-sm"
+              >
+                Save (Download)
+              </button>
+            </div>
+          </div>
+
+          {/* Editor + Output */}
+          <div className="grid grid-cols-12 gap-4 p-4" style={{ minHeight: 360 }}>
+            <div className="col-span-7 flex flex-col">
+              <div className="text-sm text-white/80 mb-2">Editor</div>
+
+              <Editor
+                height="300px"
+                language={language === "javascript" ? "javascript" : "python"}
+                value={code}
+                onChange={(v) => setCode(v || "")}
+                theme="vs-dark"
+                options={{
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 14,
+                  automaticLayout: true
+                }}
+              />
+            </div>
+
+            <div className="col-span-5 flex flex-col">
+              <div className="text-sm text-white/80 mb-2">Output Terminal</div>
+
+              <div className="flex-1 min-h-0">
+                <div
+                  className="h-full w-full p-3 font-mono text-sm rounded-md bg-black/60 text-green-300 overflow-auto border border-white/6"
+                  style={{ minHeight: 200 }}
+                >
+                  {output}
+                </div>
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => alert("shareToChat placeholder")}
+                  className="flex-1 px-3 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm"
+                >
+                  Share to chat
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      if (navigator.share) await navigator.share({ title: "Code", text: code });
+                      else {
+                        await navigator.clipboard.writeText(code);
+                        alert("Code copied.");
+                      }
+                    } catch (e: any) {
+                      alert("Share failed: " + e.message);
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-sm"
+                >
+                  Share code
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      if (navigator.share) await navigator.share({ title: "Output", text: output });
+                      else {
+                        await navigator.clipboard.writeText(output);
+                        alert("Output copied.");
+                      }
+                    } catch (e: any) {
+                      alert("Share failed: " + e.message);
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 rounded-md bg-slate-600 hover:bg-slate-500 text-white text-sm"
+                >
+                  Share output
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 text-xs text-white/60 z-20">
+        © 2025 Prime Studio Code Editor
       </div>
     </div>
   );
 }
-
-/* ---------------- styles ---------------- */
-const primaryBtn: React.CSSProperties = {
-  padding: '8px 12px', borderRadius: 6, background: '#0b84ff', color: '#fff', border: 'none', cursor: 'pointer'
-};
-const secondaryBtn: React.CSSProperties = {
-  padding: '8px 12px', borderRadius: 6, background: '#2b2b2b', color: '#fff', border: '1px solid #333', cursor: 'pointer'
-};
-const actionBtn: React.CSSProperties = {
-  padding: '8px 12px', borderRadius: 6, background: '#007acc', color: '#fff', border: 'none', cursor: 'pointer'
-};
-const dangerBtn: React.CSSProperties = {
-  padding: '8px 12px', borderRadius: 6, background: '#d32f2f', color: '#fff', border: 'none', cursor: 'pointer'
-};

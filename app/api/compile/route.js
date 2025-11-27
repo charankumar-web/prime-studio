@@ -6,38 +6,54 @@ const runtimeMap = {
   javascript: "node",
   python: "python3",
   c: "c",
-  cpp: "cpp",
-  java: "java"   // use "java" for EMKC piston; some endpoints accept "openjdk" or "java:17"
+  "c++": "cpp",
+  java: "java"
 };
 
 export async function POST(req) {
   try {
-    const { language, code } = await req.json();
-    if (!language || !code) return NextResponse.json({ error: "language & code required" }, { status: 400 });
-
+    const { language, code: rawCode } = await req.json();
+    if (!language || !rawCode) {
+      return NextResponse.json({ error: "language & code are required" }, { status: 400 });
+    }
     const runtime = runtimeMap[language];
-    if (!runtime) return NextResponse.json({ error: "unsupported language" }, { status: 400 });
+    if (!runtime) return NextResponse.json({ error: "Unsupported language" }, { status: 400 });
 
-    const payload = {
-      language: runtime,
-      version: "*",
-      files: [
-        {
-          name: language === 'java' ? 'Main.java' : 'code',
-          content: code
-        }
-      ]
-    };
+    let code = rawCode;
+    let fileName = "code";
+    if (language === "java") fileName = "Main.java";
+    if (language === "c") fileName = "code.c";
+    if (language === "c++") fileName = "code.cpp";
+    if (language === "javascript") fileName = "code.js";
+    if (language === "python") fileName = "code.py";
 
-    const pistonRes = await fetch(PISTON_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (!pistonRes.ok) return NextResponse.json({ error: 'compiler unreachable' }, { status: 500 });
+    if (language === "java" && !code.includes("class Main")) {
+      code = `public class Main {
+    public static void main(String[] args) {
+        ${code}
+    }
+}`;
+    }
+
+    const payload = { language: runtime, version: "*", files: [{ name: fileName, content: code }] };
+
+    const pistonRes = await fetch(PISTON_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!pistonRes.ok) {
+      return NextResponse.json({ error: "Compiler service unreachable" }, { status: 500 });
+    }
 
     const data = await pistonRes.json();
-    const stdout = data.run?.stdout || '';
-    const stderr = data.run?.stderr || '';
-    const output = stdout + (stderr ? `\n[stderr]\n${stderr}` : '');
+    const stdout = data.run?.stdout || "";
+    const stderr = data.run?.stderr || "";
+    const outputRaw = (stdout || "") + (stderr ? `\n[stderr]\n${stderr}` : "");
+    const output = outputRaw.trim() || "(empty output)";
 
-    return NextResponse.json({ run: data.run, output: output || '(empty output)' });
+    return NextResponse.json({ run: data.run, output });
   } catch (err) {
     return NextResponse.json({ error: err?.message ?? String(err) }, { status: 500 });
   }
