@@ -3,33 +3,52 @@
 import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 
-// Load Monaco Editor
+// Monaco Editor
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
 export default function Page() {
-  // Default templates
+  // ---------------------- LOAD CLIQ SDK ---------------------------
+  const [sdkReady, setSdkReady] = useState(false);
+
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://static.zohocdn.com/cliq/js/client-sdk.js";
+    script.onload = () => {
+      console.log("✔ Cliq SDK loaded:", window.Zoho);
+      setSdkReady(true);
+    };
+    script.onerror = () => {
+      console.log("❌ Failed to load Cliq SDK");
+    };
+    document.body.appendChild(script);
+  }, []);
+
+  // ---------------------- DEFAULT CODE ---------------------------
+
   const defaultCode: Record<string, string> = {
     python: `print("Hello, world!")`,
     javascript: `console.log("Hello, world!");`,
     java: `public class Main {
-    public static void main(String[] args) {
-        System.out.println("Hello, world!");
-    }
+  public static void main(String[] args) {
+      System.out.println("Hello, world!");
+  }
 }`,
     c: `#include <stdio.h>
 
 int main() {
-    printf("Hello, world!");
-    return 0;
+  printf("Hello, world!");
+  return 0;
 }`,
     "c++": `#include <iostream>
 using namespace std;
 
 int main() {
-    cout << "Hello, world!";
-    return 0;
+  cout << "Hello, world!";
+  return 0;
 }`
   };
+
+  // --------------------------- STATE ------------------------------
 
   const [language, setLanguage] = useState("python");
   const [code, setCode] = useState(defaultCode["python"]);
@@ -38,15 +57,8 @@ int main() {
   const [pendingLanguage, setPendingLanguage] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // 1️⃣ Load Zoho Cliq SDK
-  useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://static.zohocdn.com/cliq/js/client-sdk.js";
-    script.onload = () => console.log("Cliq SDK loaded");
-    document.body.appendChild(script);
-  }, []);
+  // ---------------------- LOAD SESSION ----------------------------
 
-  // Load previous session
   useEffect(() => {
     const savedLang = localStorage.getItem("ps-language");
     const savedCode = localStorage.getItem("ps-code");
@@ -57,13 +69,14 @@ int main() {
     }
   }, []);
 
-  // Save
+  // --------------------------- SAVE -------------------------------
+
   const saveToLocal = () => {
     localStorage.setItem("ps-language", language);
     localStorage.setItem("ps-code", code);
 
     setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 1500);
+    setTimeout(() => setShowSuccess(false), 2000);
   };
 
   const hasUnsavedChanges = () => {
@@ -73,7 +86,8 @@ int main() {
     );
   };
 
-  // Warn on close
+  // ----------------------- PREVENT PAGE CLOSE ---------------------
+
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges()) {
@@ -85,12 +99,15 @@ int main() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [code, language]);
 
+  // --------------------- LANGUAGE CHANGE --------------------------
+
   const handleLanguageChange = (newLang: string) => {
     if (!hasUnsavedChanges()) {
       setLanguage(newLang);
       setCode(defaultCode[newLang]);
       return;
     }
+
     setPendingLanguage(newLang);
     setShowDialog(true);
   };
@@ -114,9 +131,11 @@ int main() {
 
   const modalCancel = () => setShowDialog(false);
 
-  // 2️⃣ Run Code using backend
+  // -------------------------- RUN CODE ----------------------------
+
   const runCode = async () => {
     setOutput("⏳ Running...");
+
     try {
       const res = await fetch("/api/compile", {
         method: "POST",
@@ -125,16 +144,23 @@ int main() {
       });
 
       const data = await res.json();
+
+      if (data.error) {
+        setOutput("❌ Error:\n" + data.error);
+        return;
+      }
+
       setOutput(data.output || "(empty output)");
     } catch (err: any) {
-      setOutput("🔥 Error: " + err?.message);
+      setOutput("🔥 Error:\n" + err.message);
     }
   };
 
-  // 3️⃣ SHARE TO CHAT USING CLIQ SDK (REAL SNIPPET CARD)
+  // ------------------ SHARE TO CHAT (CLIq SDK) ---------------------
+
   const shareToChat = () => {
-    if (!window.Zoho || !window.Zoho.Cliq) {
-      alert("Cliq SDK is not loaded or widget not inside Cliq.");
+    if (!sdkReady || !window.Zoho || !window.Zoho.Cliq) {
+      alert("❌ Cliq SDK not loaded or widget not inside Zoho Cliq.");
       return;
     }
 
@@ -153,43 +179,34 @@ int main() {
       }
     });
 
-    alert("Shared as code snippet!");
+    alert("✔ Code sent to chat!");
   };
 
-  // 4️⃣ Share code (local)
-  const shareCode = async () => {
-    await navigator.clipboard.writeText(code);
-    alert("Code copied!");
-  };
-
-  // 5️⃣ Share output (local)
-  const shareOutput = async () => {
-    await navigator.clipboard.writeText(output);
-    alert("Output copied!");
-  };
+  // ------------------------ MONACO OPTIONS ------------------------
 
   const editorOptions = {
     minimap: { enabled: false },
+    automaticLayout: true,
     scrollBeyondLastLine: false,
     fontSize: 15,
-    fontWeight: "600",
-    lineHeight: 22,
-    automaticLayout: true
+    lineHeight: 22
   };
 
   const bgUrl = "/sl_031420_28950_10.jpg";
 
+  // ------------------------------ UI ------------------------------
+
   return (
     <div className="relative w-screen h-screen text-white">
 
-      {/* BACKGROUND */}
+      {/* Background */}
       <div
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: `url('${bgUrl}')`, filter: "brightness(0.35)" }}
       />
       <div className="absolute inset-0 bg-black/40" />
 
-      {/* MAIN APP */}
+      {/* Main UI */}
       <div className="relative z-10 flex items-center justify-center h-full px-6">
         <div
           className="w-full max-w-6xl rounded-2xl shadow-2xl backdrop-blur-xl bg-white/5 border border-white/10 overflow-hidden"
@@ -201,7 +218,7 @@ int main() {
             <select
               value={language}
               onChange={(e) => handleLanguageChange(e.target.value)}
-              className="bg-black/40 text-white px-4 py-2 rounded-lg border border-white/20 w-44 text-sm"
+              className="bg-black/40 text-white px-4 py-2 rounded-lg border border-white/20 w-44"
             >
               <option value="python">Python</option>
               <option value="java">Java</option>
@@ -216,14 +233,14 @@ int main() {
             </div>
           </div>
 
-          {/* LAYOUT */}
+          {/* Grid Layout */}
           <div className="grid grid-cols-12 gap-4 px-6 py-4 flex-1 min-h-0" style={{ height: "calc(80vh - 90px)" }}>
 
-            {/* EDITOR */}
-            <div className="col-span-8 flex flex-col bg-[#0b0f12] rounded-lg p-3 flex-1 min-h-0">
+            {/* Editor */}
+            <div className="col-span-8 bg-[#0b0f12] rounded-lg p-3 flex flex-col">
               <div className="text-sm text-white/80 mb-2">Editor</div>
 
-              <div className="flex-1 min-h-0 border border-white/10 rounded-md overflow-hidden">
+              <div className="flex-1 border border-white/10 rounded-md overflow-hidden">
                 <Editor
                   height="100%"
                   language={language === "c++" ? "cpp" : language}
@@ -235,38 +252,33 @@ int main() {
               </div>
             </div>
 
-            {/* OUTPUT SECTION */}
+            {/* Output */}
             <div className="col-span-4 flex flex-col">
               <div className="text-sm text-white/80 mb-2">Output</div>
 
-              <div className="flex-1 min-h-0 bg-black/70 rounded-md p-3 border border-white/10 font-mono text-green-300 text-sm overflow-auto">
+              <div className="flex-1 bg-black/70 rounded-md p-3 border border-white/10 font-mono text-green-300 text-sm overflow-auto">
                 {output}
               </div>
 
-              {/* BUTTONS */}
-              <div className="mt-4 flex gap-3">
-                <button onClick={shareToChat} className="flex-1 px-3 py-2 bg-indigo-600 rounded-md">
-                  Share to Chat (Snippet)
-                </button>
-                <button onClick={shareCode} className="flex-1 px-3 py-2 bg-emerald-600 rounded-md">
-                  Copy Code
-                </button>
-                <button onClick={shareOutput} className="flex-1 px-3 py-2 bg-slate-600 rounded-md">
-                  Copy Output
+              {/* Share Buttons */}
+              <div className="mt-4">
+                <button onClick={shareToChat} className="w-full px-3 py-2 bg-indigo-600 rounded-md">
+                  Share to Chat
                 </button>
               </div>
-
             </div>
+
           </div>
+
         </div>
       </div>
 
-      {/* FOOTER */}
+      {/* Footer */}
       <div className="absolute bottom-4 w-full text-center text-xs text-white/60">
         © 2025 Prime Studio Code Editor
       </div>
 
-      {/* SAVE DIALOG */}
+      {/* Save Modal */}
       {showDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white text-black rounded-lg p-6 w-80 shadow-xl">
@@ -280,14 +292,15 @@ int main() {
         </div>
       )}
 
-      {/* SAVE SUCCESS TOAST */}
+      {/* Success Popup */}
       {showSuccess && (
         <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
-          <div className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl animate-fade">
+          <div className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl">
             Saved Successfully ✔
           </div>
         </div>
       )}
+
     </div>
   );
 }
