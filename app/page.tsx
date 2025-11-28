@@ -147,29 +147,53 @@ int main() {
     }
   };
 
-  // SHARE TO ZOHO CHAT (OPTION C)
+  // SHARE TO ZOHO CHAT (FULL CODE + OUTPUT)
   const shareToChat = async () => {
-    try {
-      const res = await fetch("/api/share-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          language,
-          output
-        }),
-      });
+    const res = await fetch("/api/share-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "full",
+        code,
+        language,
+        output,
+      }),
+    });
 
-      const data = await res.json();
+    const data = await res.json();
+    alert(data.success ? "Shared successfully!" : "Failed to share!");
+  };
 
-      if (data.success) {
-        alert("Shared to Zoho Chat!");
-      } else {
-        alert("Failed: " + data.error);
-      }
-    } catch (err: any) {
-      alert("Error: " + err.message);
-    }
+  // SHARE ONLY CODE
+  const shareCodeToChat = async () => {
+    const res = await fetch("/api/share-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "code",
+        code,
+        language,
+      }),
+    });
+
+    const data = await res.json();
+    alert(data.success ? "Code shared!" : "Failed to share!");
+  };
+
+  // SHARE ONLY OUTPUT
+  const shareOutputToChat = async () => {
+    const res = await fetch("/api/share-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "output",
+        output,
+        language,
+      }),
+    });
+
+    const data = await res.json();
+    alert(data.success ? "Output shared!" : "Failed to share!");
   };
 
   // DOWNLOAD CODE
@@ -191,7 +215,7 @@ int main() {
     URL.revokeObjectURL(a.href);
   };
 
-  // SHARE CODE / OUTPUT
+  // SHARE LOCAL (NON-ZOHO)
   const shareCode = async () => {
     try {
       if (navigator.share) await navigator.share({ title: "Code", text: code });
@@ -304,10 +328,12 @@ int main() {
                 <button onClick={shareToChat} className="flex-1 px-3 py-2 bg-indigo-600 rounded-md">
                   Share to chat
                 </button>
-                <button onClick={shareCode} className="flex-1 px-3 py-2 bg-emerald-600 rounded-md">
+
+                <button onClick={shareCodeToChat} className="flex-1 px-3 py-2 bg-emerald-600 rounded-md">
                   Share code
                 </button>
-                <button onClick={shareOutput} className="flex-1 px-3 py-2 bg-slate-600 rounded-md">
+
+                <button onClick={shareOutputToChat} className="flex-1 px-3 py-2 bg-slate-600 rounded-md">
                   Share output
                 </button>
               </div>
