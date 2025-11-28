@@ -3,11 +3,11 @@
 import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 
-// Monaco Editor (no SSR)
+// Load Monaco Editor
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
 export default function Page() {
-  // DEFAULT CODE TEMPLATES
+  // Default templates
   const defaultCode: Record<string, string> = {
     python: `print("Hello, world!")`,
     javascript: `console.log("Hello, world!");`,
@@ -31,7 +31,6 @@ int main() {
 }`
   };
 
-  // STATE
   const [language, setLanguage] = useState("python");
   const [code, setCode] = useState(defaultCode["python"]);
   const [output, setOutput] = useState("Output will appear here...");
@@ -39,7 +38,15 @@ int main() {
   const [pendingLanguage, setPendingLanguage] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // LOAD LAST SAVED SESSION
+  // 1️⃣ Load Zoho Cliq SDK
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://static.zohocdn.com/cliq/js/client-sdk.js";
+    script.onload = () => console.log("Cliq SDK loaded");
+    document.body.appendChild(script);
+  }, []);
+
+  // Load previous session
   useEffect(() => {
     const savedLang = localStorage.getItem("ps-language");
     const savedCode = localStorage.getItem("ps-code");
@@ -50,16 +57,15 @@ int main() {
     }
   }, []);
 
-  // SAVE FUNCTION
+  // Save
   const saveToLocal = () => {
     localStorage.setItem("ps-language", language);
     localStorage.setItem("ps-code", code);
 
     setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 2000);
+    setTimeout(() => setShowSuccess(false), 1500);
   };
 
-  // UNSAVED CHANGES CHECK
   const hasUnsavedChanges = () => {
     return (
       localStorage.getItem("ps-code") !== code ||
@@ -67,7 +73,7 @@ int main() {
     );
   };
 
-  // WARNING BEFORE PAGE CLOSE
+  // Warn on close
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges()) {
@@ -79,34 +85,22 @@ int main() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [code, language]);
 
-  // LANGUAGE CHANGE HANDLER
   const handleLanguageChange = (newLang: string) => {
     if (!hasUnsavedChanges()) {
       setLanguage(newLang);
-
-      const savedLang = localStorage.getItem("ps-language");
-      const savedCode = localStorage.getItem("ps-code");
-
-      if (savedLang === newLang && savedCode) {
-        setCode(savedCode);
-      } else {
-        setCode(defaultCode[newLang]);
-      }
+      setCode(defaultCode[newLang]);
       return;
     }
-
     setPendingLanguage(newLang);
     setShowDialog(true);
   };
 
-  // MODAL ACTIONS
   const modalSave = () => {
     saveToLocal();
     if (pendingLanguage) {
       setLanguage(pendingLanguage);
       setCode(defaultCode[pendingLanguage]);
     }
-    setPendingLanguage(null);
     setShowDialog(false);
   };
 
@@ -115,16 +109,12 @@ int main() {
       setLanguage(pendingLanguage);
       setCode(defaultCode[pendingLanguage]);
     }
-    setPendingLanguage(null);
     setShowDialog(false);
   };
 
-  const modalCancel = () => {
-    setPendingLanguage(null);
-    setShowDialog(false);
-  };
+  const modalCancel = () => setShowDialog(false);
 
-  // RUN CODE USING BACKEND
+  // 2️⃣ Run Code using backend
   const runCode = async () => {
     setOutput("⏳ Running...");
     try {
@@ -135,109 +125,49 @@ int main() {
       });
 
       const data = await res.json();
-
-      if (data.error) {
-        setOutput("❌ Error:\n" + data.error);
-        return;
-      }
-
       setOutput(data.output || "(empty output)");
     } catch (err: any) {
-      setOutput("🔥 Error:\n" + (err?.message ?? String(err)));
+      setOutput("🔥 Error: " + err?.message);
     }
   };
 
-  // SHARE TO ZOHO CHAT (FULL CODE + OUTPUT)
-  const shareToChat = async () => {
-    const res = await fetch("/api/share-code", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "full",
-        code,
-        language,
-        output,
-      }),
+  // 3️⃣ SHARE TO CHAT USING CLIQ SDK (REAL SNIPPET CARD)
+  const shareToChat = () => {
+    if (!window.Zoho || !window.Zoho.Cliq) {
+      alert("Cliq SDK is not loaded or widget not inside Cliq.");
+      return;
+    }
+
+    window.Zoho.Cliq.sendMessage({
+      text: "",
+      card: {
+        theme: "modern",
+        title: `Code Snippet (${language})`,
+        sections: [
+          {
+            type: "code",
+            language: language,
+            data: code
+          }
+        ]
+      }
     });
 
-    const data = await res.json();
-    alert(data.success ? "Shared successfully!" : "Failed to share!");
+    alert("Shared as code snippet!");
   };
 
-  // SHARE ONLY CODE
-  const shareCodeToChat = async () => {
-    const res = await fetch("/api/share-code", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "code",
-        code,
-        language,
-      }),
-    });
-
-    const data = await res.json();
-    alert(data.success ? "Code shared!" : "Failed to share!");
-  };
-
-  // SHARE ONLY OUTPUT
-  const shareOutputToChat = async () => {
-    const res = await fetch("/api/share-code", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "output",
-        output,
-        language,
-      }),
-    });
-
-    const data = await res.json();
-    alert(data.success ? "Output shared!" : "Failed to share!");
-  };
-
-  // DOWNLOAD CODE
-  const downloadLocal = () => {
-    const extMap: Record<string, string> = {
-      python: ".py",
-      java: ".java",
-      c: ".c",
-      "c++": ".cpp",
-      javascript: ".js"
-    };
-
-    const ext = extMap[language] || ".txt";
-    const blob = new Blob([code], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "code" + ext;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  // SHARE LOCAL (NON-ZOHO)
+  // 4️⃣ Share code (local)
   const shareCode = async () => {
-    try {
-      if (navigator.share) await navigator.share({ title: "Code", text: code });
-      else {
-        await navigator.clipboard.writeText(code);
-        alert("Code Copied.");
-      }
-    } catch {}
+    await navigator.clipboard.writeText(code);
+    alert("Code copied!");
   };
 
+  // 5️⃣ Share output (local)
   const shareOutput = async () => {
-    try {
-      if (navigator.share)
-        await navigator.share({ title: "Output", text: output });
-      else {
-        await navigator.clipboard.writeText(output);
-        alert("Output Copied.");
-      }
-    } catch {}
+    await navigator.clipboard.writeText(output);
+    alert("Output copied!");
   };
 
-  // MONACO EDITOR OPTIONS
   const editorOptions = {
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
@@ -259,14 +189,14 @@ int main() {
       />
       <div className="absolute inset-0 bg-black/40" />
 
-      {/* MAIN */}
+      {/* MAIN APP */}
       <div className="relative z-10 flex items-center justify-center h-full px-6">
         <div
           className="w-full max-w-6xl rounded-2xl shadow-2xl backdrop-blur-xl bg-white/5 border border-white/10 overflow-hidden"
           style={{ height: "80vh" }}
         >
 
-          {/* TOOLBAR */}
+          {/* Toolbar */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <select
               value={language}
@@ -283,15 +213,11 @@ int main() {
             <div className="flex gap-3">
               <button onClick={runCode} className="px-4 py-2 bg-blue-600 rounded-md">Run</button>
               <button onClick={saveToLocal} className="px-4 py-2 bg-gray-700 rounded-md">Save</button>
-              <button onClick={downloadLocal} className="px-4 py-2 bg-gray-700 rounded-md">Save (Download)</button>
             </div>
           </div>
 
-          {/* GRID LAYOUT */}
-          <div
-            className="grid grid-cols-12 gap-4 px-6 py-4 flex-1 min-h-0"
-            style={{ height: "calc(80vh - 90px)" }}
-          >
+          {/* LAYOUT */}
+          <div className="grid grid-cols-12 gap-4 px-6 py-4 flex-1 min-h-0" style={{ height: "calc(80vh - 90px)" }}>
 
             {/* EDITOR */}
             <div className="col-span-8 flex flex-col bg-[#0b0f12] rounded-lg p-3 flex-1 min-h-0">
@@ -300,13 +226,7 @@ int main() {
               <div className="flex-1 min-h-0 border border-white/10 rounded-md overflow-hidden">
                 <Editor
                   height="100%"
-                  language={
-                    language === "javascript"
-                      ? "javascript"
-                      : language === "c++"
-                      ? "cpp"
-                      : language
-                  }
+                  language={language === "c++" ? "cpp" : language}
                   value={code}
                   onChange={(v) => setCode(v ?? "")}
                   theme="vs-dark"
@@ -315,7 +235,7 @@ int main() {
               </div>
             </div>
 
-            {/* OUTPUT */}
+            {/* OUTPUT SECTION */}
             <div className="col-span-4 flex flex-col">
               <div className="text-sm text-white/80 mb-2">Output</div>
 
@@ -323,20 +243,19 @@ int main() {
                 {output}
               </div>
 
-              {/* SHARE BUTTONS */}
+              {/* BUTTONS */}
               <div className="mt-4 flex gap-3">
                 <button onClick={shareToChat} className="flex-1 px-3 py-2 bg-indigo-600 rounded-md">
-                  Share to chat
+                  Share to Chat (Snippet)
                 </button>
-
-                <button onClick={shareCodeToChat} className="flex-1 px-3 py-2 bg-emerald-600 rounded-md">
-                  Share code
+                <button onClick={shareCode} className="flex-1 px-3 py-2 bg-emerald-600 rounded-md">
+                  Copy Code
                 </button>
-
-                <button onClick={shareOutputToChat} className="flex-1 px-3 py-2 bg-slate-600 rounded-md">
-                  Share output
+                <button onClick={shareOutput} className="flex-1 px-3 py-2 bg-slate-600 rounded-md">
+                  Copy Output
                 </button>
               </div>
+
             </div>
           </div>
         </div>
@@ -347,28 +266,21 @@ int main() {
         © 2025 Prime Studio Code Editor
       </div>
 
-      {/* SAVE CONFIRMATION MODAL */}
+      {/* SAVE DIALOG */}
       {showDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white text-black rounded-lg p-6 w-80 shadow-xl">
             <h2 className="text-lg font-bold mb-4">Do you want to save changes?</h2>
-
             <div className="flex justify-end gap-2">
-              <button onClick={modalSave} className="bg-blue-600 text-white px-3 py-1 rounded">
-                Save
-              </button>
-              <button onClick={modalDontSave} className="bg-gray-500 text-white px-3 py-1 rounded">
-                Don't Save
-              </button>
-              <button onClick={modalCancel} className="bg-gray-300 px-3 py-1 rounded">
-                Cancel
-              </button>
+              <button onClick={modalSave} className="bg-blue-600 text-white px-3 py-1 rounded">Save</button>
+              <button onClick={modalDontSave} className="bg-gray-500 text-white px-3 py-1 rounded">Don't Save</button>
+              <button onClick={modalCancel} className="bg-gray-300 px-3 py-1 rounded">Cancel</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* SAVE SUCCESS POPUP */}
+      {/* SAVE SUCCESS TOAST */}
       {showSuccess && (
         <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
           <div className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl animate-fade">
