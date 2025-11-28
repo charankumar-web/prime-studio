@@ -10,12 +10,23 @@ const runtimeMap = {
   java: "java"
 };
 
+function safeDecode(input) {
+  try {
+    // If string contains URL encoding like %2B %28 etc.
+    if (/%[0-9A-Fa-f]{2}/.test(input) || input.includes("+")) {
+      return decodeURIComponent(input.replace(/\+/g, "%20"));
+    }
+    return input; // Already raw
+  } catch (e) {
+    return input; // fallback
+  }
+}
+
 export async function POST(req) {
   try {
-    // -------------------------------
-    // 1️⃣ FIX: Decode encoded code
-    // -------------------------------
-    const { language, code: encoded } = await req.json();
+    const body = await req.json();
+    const language = body.language;
+    let encoded = body.code;
 
     if (!language || encoded === undefined) {
       return NextResponse.json(
@@ -24,13 +35,8 @@ export async function POST(req) {
       );
     }
 
-    // Important: decode safeCode from Deluge
-    let rawCode = "";
-    try {
-      rawCode = decodeURIComponent(encoded);
-    } catch (e) {
-      rawCode = encoded; // fallback for frontend (raw text)
-    }
+    // 🟢 FINAL FIX: decode safely
+    const rawCode = safeDecode(encoded);
 
     const runtime = runtimeMap[language];
     if (!runtime) {
@@ -40,9 +46,6 @@ export async function POST(req) {
       );
     }
 
-    // -------------------------------
-    // 2️⃣ FILE NAME HANDLING
-    // -------------------------------
     let fileName = "code";
 
     if (language === "java") fileName = "Main.java";
@@ -51,34 +54,23 @@ export async function POST(req) {
     if (language === "javascript") fileName = "code.js";
     if (language === "python") fileName = "code.py";
 
-    // -------------------------------
-    // 3️⃣ JAVA WRAPPER (required)
-    // -------------------------------
+    // Java wrapper
+    let finalCode = rawCode;
     if (language === "java" && !rawCode.includes("class Main")) {
-      rawCode = `public class Main {
+      finalCode = `public class Main {
     public static void main(String[] args) {
         ${rawCode}
     }
 }`;
     }
 
-    // -------------------------------
-    // 4️⃣ PISTON PAYLOAD
-    // -------------------------------
+    // RUN ON PISTON
     const payload = {
       language: runtime,
       version: "*",
-      files: [
-        {
-          name: fileName,
-          content: rawCode // MUST BE DECODED CODE
-        }
-      ]
+      files: [{ name: fileName, content: finalCode }]
     };
 
-    // -------------------------------
-    // 5️⃣ SEND TO PISTON
-    // -------------------------------
     const pistonRes = await fetch(PISTON_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -94,14 +86,10 @@ export async function POST(req) {
 
     const data = await pistonRes.json();
 
-    // -------------------------------
-    // 6️⃣ OUTPUT SAFE MERGE
-    // -------------------------------
     const stdout = data.run?.stdout || "";
     const stderr = data.run?.stderr || "";
     const outputRaw =
       (stdout || "") + (stderr ? `\n[stderr]\n${stderr}` : "");
-
     const output = outputRaw.trim() || "(empty output)";
 
     return NextResponse.json({ run: data.run, output });
