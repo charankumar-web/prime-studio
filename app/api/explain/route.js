@@ -2,24 +2,20 @@ import { NextResponse } from "next/server";
 
 export async function POST(req) {
   try {
-    // Zoho Cliq sends form-data, NOT JSON
+    // Zoho sends form-data (NOT JSON)
     const form = await req.formData();
 
     const code = form.get("code");
     const language = form.get("language");
 
     if (!code || !language) {
-      return NextResponse.json(
-        { explanation: "❌ Missing code or language." },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        explanation: "❌ Missing code or language.",
+        raw: { code, language }
+      });
     }
 
-    const prompt = `
-Explain this ${language} code in simple steps:
-
-${code}
-`;
+    const prompt = `Explain this ${language} code in simple steps:\n\n${code}`;
 
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -30,24 +26,26 @@ ${code}
           "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
         },
         body: JSON.stringify({
-          model: "llama3-8b-8192",
+          model: "llama-3.1-8b-instant",
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.3
+          temperature: 0.4
         })
       }
     );
 
     const data = await response.json();
 
-    const explanation =
-      data?.choices?.[0]?.message?.content ||
-      "No explanation returned.";
+    // Extract explanation safely
+    const explanation = data?.choices?.[0]?.message?.content;
 
-    return NextResponse.json({ explanation });
+    return NextResponse.json({
+      explanation: explanation || "❌ No explanation returned.",
+      raw: data
+    });
 
   } catch (err) {
     return NextResponse.json(
-      { explanation: "❌ Server error: " + err.toString() },
+      { explanation: "❌ Server Error: " + err.toString() },
       { status: 500 }
     );
   }
