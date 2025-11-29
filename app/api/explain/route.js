@@ -2,19 +2,27 @@ import { NextResponse } from "next/server";
 
 export async function POST(req) {
   try {
-    const body = await req.json();
-    const { code, language } = body;
+    // 🟢 FIX: Cliq bot sends formData, not JSON
+    const form = await req.formData();
 
-    if (!code) {
-      return NextResponse.json({ error: "Code required" }, { status: 400 });
+    const code = form.get("code");
+    const language = form.get("language");
+
+    if (!code || !language) {
+      return NextResponse.json(
+        { explanation: "❌ Missing code or language in request." },
+        { status: 400 }
+      );
     }
 
+    // Create prompt for OpenAI
     const prompt = `
-Explain this ${language} code in simple steps:
+Explain this ${language} code in simple, clear steps:
 
 ${code}
-`;
+    `;
 
+    // Call OpenAI
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -30,10 +38,16 @@ ${code}
 
     const data = await response.json();
 
-    return NextResponse.json({
-      explanation: data.choices?.[0]?.message?.content || "No explanation."
-    });
+    // Extract explanation
+    const explanation =
+      data?.choices?.[0]?.message?.content || "No explanation returned.";
+
+    return NextResponse.json({ explanation });
+
   } catch (err) {
-    return NextResponse.json({ error: err.toString() }, { status: 500 });
+    return NextResponse.json(
+      { explanation: "❌ Server Error: " + err.toString() },
+      { status: 500 }
+    );
   }
 }
