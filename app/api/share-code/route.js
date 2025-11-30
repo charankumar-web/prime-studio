@@ -15,15 +15,14 @@ export async function POST(req) {
     if (type === "full") {
       textMessage =
         "📌 *Code Snippet (" + language + ")*\n\n" +
-        "```" + language + "\n" + code + "\n```" +
+        "```" + code + "\n```" +
         "\n\n📤 *Output:*\n```" + (output || "No output") + "```";
     }
 
     // Build message for only code
     else if (type === "code") {
       textMessage =
-        "📌 *Code (" + language + ")*\n\n```" +
-        language + "\n" + code + "\n```";
+        "📌 *Code (" + language + ")*\n\n```" + code + "\n```";
     }
 
     // Build message for only output
