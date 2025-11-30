@@ -3,11 +3,11 @@
 import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 
-// Load Monaco (no SSR)
+// Load Monaco Editor (no SSR)
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
 export default function Page() {
-  // ---------- DEFAULT CODE ----------
+  // Default templates for each language
   const defaultCode: Record<string, string> = {
     python: `print("Hello, world!")`,
     javascript: `console.log("Hello, world!");`,
@@ -17,21 +17,19 @@ export default function Page() {
     }
 }`,
     c: `#include <stdio.h>
-
 int main() {
     printf("Hello, world!");
     return 0;
 }`,
     "c++": `#include <iostream>
 using namespace std;
-
 int main() {
     cout << "Hello, world!";
     return 0;
 }`
   };
 
-  // ---------- STATES ----------
+  // Component state
   const [language, setLanguage] = useState("python");
   const [code, setCode] = useState(defaultCode["python"]);
   const [output, setOutput] = useState("Output will appear here...");
@@ -39,81 +37,36 @@ int main() {
   const [pendingLanguage, setPendingLanguage] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // --------------------------------------------------
-  // 🔥 LOAD FILE USING URL PARAMETERS (CORRECT METHOD)
-  // --------------------------------------------------
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const params = new URLSearchParams(window.location.search);
-    const fileId = params.get("file_id");
-    const fileName = params.get("file_name");
-
-    if (fileId && fileName) {
-      const loadFile = async () => {
-        try {
-          const zcl = (window as any).zohocliq;
-
-          const fileContent = await zcl.request({
-            url: `https://cliq.zoho.com/api/v2/attachments/${fileId}`,
-            method: "GET",
-            connect: "cliq_oauth_connection"
-          });
-
-          // Detect language safely
-          const ext = fileName.split(".").pop() || "";
-          const map: Record<string, string> = {
-            py: "python",
-            js: "javascript",
-            java: "java",
-            c: "c",
-            cpp: "c++"
-          };
-
-          // TS-SAFE FIX 🔥
-          const lang = map[ext] || "python";
-
-          setLanguage(lang);
-          setCode(fileContent);
-          setOutput("📁 Loaded from Zoho Cliq");
-        } catch (err) {
-          console.error("Attachment loading failed:", err);
-          setOutput("❌ Failed to load file from Zoho Cliq.");
-        }
-      };
-
-      loadFile();
-    }
-  }, []);
-
-  // ---------- LOAD SAVED SESSION ----------
+  // Load previously saved language & its code on mount
   useEffect(() => {
     const savedLang = localStorage.getItem("ps-language");
-    const savedCode = localStorage.getItem("ps-code");
-
-    if (savedLang && savedCode) {
+    if (savedLang) {
+      const savedCode = localStorage.getItem(`ps-code-${savedLang}`);
       setLanguage(savedLang);
-      setCode(savedCode);
+      setCode(savedCode ?? defaultCode[savedLang]);
     }
   }, []);
 
-  // ---------- SAVE ----------
+  // Save current language + code to localStorage
   const saveToLocal = () => {
     localStorage.setItem("ps-language", language);
-    localStorage.setItem("ps-code", code);
-
+    localStorage.setItem(`ps-code-${language}`, code);
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 2000);
   };
 
-  // ---------- UNSAVED CHANGES ----------
+  // Detect unsaved changes for the CURRENT language only (fixed)
   const hasUnsavedChanges = () => {
-    return (
-      localStorage.getItem("ps-code") !== code ||
-      localStorage.getItem("ps-language") !== language
-    );
+    const saved = localStorage.getItem(`ps-code-${language}`);
+    // If nothing saved yet for this language, compare against default template.
+    if (saved === null) {
+      return code !== defaultCode[language];
+    }
+    // If saved exists, compare saved vs current
+    return saved !== code;
   };
 
+  // Prompt before page unload when there are unsaved changes
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges()) {
@@ -125,11 +78,15 @@ int main() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [code, language]);
 
-  // ---------- LANGUAGE CHANGE ----------
+  // Handle language change, show modal only if code was edited for current language
   const handleLanguageChange = (newLang: string) => {
+    if (newLang === language) return;
+
     if (!hasUnsavedChanges()) {
+      localStorage.setItem("ps-language", newLang);
+      const savedCode = localStorage.getItem(`ps-code-${newLang}`);
       setLanguage(newLang);
-      setCode(defaultCode[newLang]);
+      setCode(savedCode ?? defaultCode[newLang]);
       return;
     }
 
@@ -137,32 +94,38 @@ int main() {
     setShowDialog(true);
   };
 
-  // ---------- NOTE PAD STYLE MODAL ----------
+  // Modal action: save current language then switch
   const modalSave = () => {
     saveToLocal();
     if (pendingLanguage) {
-      setLanguage(pendingLanguage);
-      setCode(defaultCode[pendingLanguage]);
+      const newLang = pendingLanguage;
+      const savedCode = localStorage.getItem(`ps-code-${newLang}`);
+      setLanguage(newLang);
+      setCode(savedCode ?? defaultCode[newLang]);
     }
     setPendingLanguage(null);
     setShowDialog(false);
   };
 
+  // Modal action: don't save current language, just switch
   const modalDontSave = () => {
     if (pendingLanguage) {
-      setLanguage(pendingLanguage);
-      setCode(defaultCode[pendingLanguage]);
+      const newLang = pendingLanguage;
+      const savedCode = localStorage.getItem(`ps-code-${newLang}`);
+      setLanguage(newLang);
+      setCode(savedCode ?? defaultCode[newLang]);
     }
     setPendingLanguage(null);
     setShowDialog(false);
   };
 
+  // Modal action: cancel switching
   const modalCancel = () => {
     setPendingLanguage(null);
     setShowDialog(false);
   };
 
-  // ---------- RUN CODE ----------
+  // Run code via backend API
   const runCode = async () => {
     setOutput("⏳ Running...");
     try {
@@ -171,26 +134,20 @@ int main() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language, code })
       });
-
       const data = await res.json();
-      if (data.error) {
-        setOutput("❌ Error:\n" + data.error);
-      } else {
-        setOutput(data.output || "(empty output)");
-      }
+      setOutput(data.error ? "❌ Error:\n" + data.error : data.output || "(empty output)");
     } catch (err: any) {
-      setOutput("🔥 Error:\n" + err.message);
+      setOutput("🔥 Error:\n" + (err?.message ?? String(err)));
     }
   };
 
-  // ---------- SHARE ----------
+  // Share functions (Zoho or local share)
   const shareToChat = async () => {
     const res = await fetch("/api/share-code", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "full", code, language, output })
     });
-
     const data = await res.json();
     alert(data.success ? "Shared successfully!" : "Failed to share!");
   };
@@ -201,7 +158,6 @@ int main() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "code", code, language })
     });
-
     const data = await res.json();
     alert(data.success ? "Code shared!" : "Failed to share!");
   };
@@ -212,12 +168,11 @@ int main() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "output", output, language })
     });
-
     const data = await res.json();
     alert(data.success ? "Output shared!" : "Failed to share!");
   };
 
-  // ---------- DOWNLOAD ----------
+  // Download code file
   const downloadLocal = () => {
     const extMap: Record<string, string> = {
       python: ".py",
@@ -226,7 +181,6 @@ int main() {
       "c++": ".cpp",
       javascript: ".js"
     };
-
     const ext = extMap[language] || ".txt";
     const blob = new Blob([code], { type: "text/plain" });
     const a = document.createElement("a");
@@ -236,7 +190,7 @@ int main() {
     URL.revokeObjectURL(a.href);
   };
 
-  // ---------- EDITOR OPTIONS ----------
+  // Monaco editor options
   const editorOptions = {
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
@@ -250,17 +204,20 @@ int main() {
 
   return (
     <div className="relative w-screen h-screen text-white">
+      {/* Background */}
       <div
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: `url('${bgUrl}')`, filter: "brightness(0.35)" }}
       />
       <div className="absolute inset-0 bg-black/40" />
 
+      {/* Main */}
       <div className="relative z-10 flex items-center justify-center h-full px-6">
         <div
           className="w-full max-w-6xl rounded-2xl shadow-2xl backdrop-blur-xl bg-white/5 border border-white/10 overflow-hidden"
           style={{ height: "80vh" }}
         >
+          {/* Toolbar */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <select
               value={language}
@@ -275,25 +232,20 @@ int main() {
             </select>
 
             <div className="flex gap-3">
-              <button onClick={runCode} className="px-4 py-2 bg-blue-600 rounded-md">
-                Run
-              </button>
-              <button onClick={saveToLocal} className="px-4 py-2 bg-gray-700 rounded-md">
-                Save
-              </button>
-              <button onClick={downloadLocal} className="px-4 py-2 bg-gray-700 rounded-md">
-                Save (Download)
-              </button>
+              <button onClick={runCode} className="px-4 py-2 bg-blue-600 rounded-md">Run</button>
+              <button onClick={saveToLocal} className="px-4 py-2 bg-gray-700 rounded-md">Save</button>
+              <button onClick={downloadLocal} className="px-4 py-2 bg-gray-700 rounded-md">Download</button>
             </div>
           </div>
 
+          {/* Grid layout */}
           <div
             className="grid grid-cols-12 gap-4 px-6 py-4 flex-1 min-h-0"
             style={{ height: "calc(80vh - 90px)" }}
           >
+            {/* Editor */}
             <div className="col-span-8 flex flex-col bg-[#0b0f12] rounded-lg p-3 flex-1 min-h-0">
               <div className="text-sm text-white/80 mb-2">Editor</div>
-
               <div className="flex-1 min-h-0 border border-white/10 rounded-md overflow-hidden">
                 <Editor
                   height="100%"
@@ -306,9 +258,9 @@ int main() {
               </div>
             </div>
 
+            {/* Output */}
             <div className="col-span-4 flex flex-col">
               <div className="text-sm text-white/80 mb-2">Output</div>
-
               <div className="flex-1 min-h-0 bg-black/70 rounded-md p-3 border border-white/10 font-mono text-green-300 text-sm overflow-auto">
                 {output}
               </div>
@@ -317,11 +269,9 @@ int main() {
                 <button onClick={shareToChat} className="flex-1 px-3 py-2 bg-indigo-600 rounded-md">
                   Share to chat
                 </button>
-
                 <button onClick={shareCodeToChat} className="flex-1 px-3 py-2 bg-emerald-600 rounded-md">
                   Share code
                 </button>
-
                 <button onClick={shareOutputToChat} className="flex-1 px-3 py-2 bg-slate-600 rounded-md">
                   Share output
                 </button>
@@ -331,10 +281,29 @@ int main() {
         </div>
       </div>
 
-      {/* Success Popup */}
+      {/* Footer */}
+      <div className="absolute bottom-4 w-full text-center text-xs text-white/60">
+        © 2025 Prime Studio Code Editor
+      </div>
+
+      {/* Save confirmation modal */}
+      {showDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white text-black rounded-lg p-6 w-80 shadow-xl">
+            <h2 className="text-lg font-bold mb-4">Do you want to save changes?</h2>
+            <div className="flex justify-end gap-2">
+              <button onClick={modalSave} className="bg-blue-600 text-white px-3 py-1 rounded">Save</button>
+              <button onClick={modalDontSave} className="bg-gray-500 text-white px-3 py-1 rounded">Don't Save</button>
+              <button onClick={modalCancel} className="bg-gray-300 px-3 py-1 rounded">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save success popup */}
       {showSuccess && (
         <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
-          <div className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl animate-fade">
+          <div className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl">
             Saved Successfully ✔
           </div>
         </div>

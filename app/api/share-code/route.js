@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 
+// Zoho incoming webhook URL
 const ZOHO_WEBHOOK_URL = process.env.ZOHO_SENDTOCHAT_URL;
-  
 
 export async function POST(req) {
   try {
+    // Read incoming JSON payload
     const { type, code, language, output } = await req.json();
 
+    // Message builder
     let textMessage = "";
 
-    // FULL (Code + Output)
+    // Build message for "full" → code + output
     if (type === "full") {
       textMessage =
         "📌 *Code Snippet (" + language + ")*\n\n" +
@@ -17,41 +19,52 @@ export async function POST(req) {
         "\n\n📤 *Output:*\n```" + (output || "No output") + "```";
     }
 
-    // ONLY CODE
+    // Build message for only code
     else if (type === "code") {
       textMessage =
         "📌 *Code (" + language + ")*\n\n```" +
         language + "\n" + code + "\n```";
     }
 
-    // ONLY OUTPUT
+    // Build message for only output
     else if (type === "output") {
       textMessage =
         "📤 *Output:*\n\n```" +
         (output || "No output") + "```";
     }
 
-    // FALLBACK
+    // Default fallback
     else {
       textMessage = "Nothing to share.";
     }
 
+    // Zoho message payload
     const payload = { text: textMessage };
 
-    // SEND TO ZOHO
+    // Send message to Zoho incoming webhook
     const zohoRes = await fetch(ZOHO_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
+    // Handle Zoho errors
     if (!zohoRes.ok) {
       const err = await zohoRes.text();
-      return NextResponse.json({ error: "Zoho webhook error", details: err }, { status: 500 });
+      return NextResponse.json(
+        { error: "Zoho webhook error", details: err },
+        { status: 500 }
+      );
     }
 
+    // Success response
     return NextResponse.json({ success: true });
+
   } catch (err) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    // Handle server or runtime errors
+    return NextResponse.json(
+      { error: err.message },
+      { status: 500 }
+    );
   }
 }
