@@ -1,109 +1,57 @@
-// app/api/share-code/route.js
 import { NextResponse } from "next/server";
 
-/**
- * Env var required:
- * ZOHO_SENDTOCHAT_URL = https://cliq.zoho.com/api/v2/bots/sendtochathandler/incoming?zapikey=XXXX
- */
-
-const ZOHO_URL = process.env.ZOHO_SENDTOCHAT_URL;
-
-/**
- * Escape triple backticks inside user code so it doesn't break markdown.
- * We insert a ZERO-WIDTH SPACE after the first backtick.
- */
-function escapeBackticks(str = "") {
-  return str.replace(/```/g, "`\u200b``");
-}
+const ZOHO_WEBHOOK_URL =
+  "https://cliq.zoho.com/api/v2/bots/sendtochathandler/incoming?zapikey=1001.050ce4fc4d8d63832f0467057ec12826.78a46d13f334cf2d8ed3559bf612be84";
 
 export async function POST(req) {
   try {
-    if (!ZOHO_URL) {
-      return NextResponse.json(
-        { success: false, error: "ZOHO_SENDTOCHAT_URL missing" },
-        { status: 500 }
-      );
+    const { type, code, language, output } = await req.json();
+
+    let textMessage = "";
+
+    // FULL (Code + Output)
+    if (type === "full") {
+      textMessage =
+        "📌 *Code Snippet (" + language + ")*\n\n" +
+        "```" + language + "\n" + code + "\n```" +
+        "\n\n📤 *Output:*\n```" + (output || "No output") + "```";
     }
 
-    let body = await req.json().catch(() => null);
-    if (!body) {
-      return NextResponse.json(
-        { success: false, error: "Invalid JSON body" },
-        { status: 400 }
-      );
+    // ONLY CODE
+    else if (type === "code") {
+      textMessage =
+        "📌 *Code (" + language + ")*\n\n```" +
+        language + "\n" + code + "\n```";
     }
 
-    const { type, code = "", language = "", output = "" } = body;
-
-    let message = "";
-
-    // --------------------------
-    // MARKDOWN FORMATTING
-    // --------------------------
-
-    if (type === "code") {
-      message =
-        `📌 *Code Snippet (${language || "text"})*\n\n` +
-        "```" + (language || "") + "\n" +
-        escapeBackticks(code) +
-        "\n```";
-
-    } else if (type === "output") {
-      message =
-        `📤 *Output:*\n\n` +
-        "```text\n" +
-        escapeBackticks(output) +
-        "\n```";
-
-    } else if (type === "full") {
-      message =
-        `📌 *Code Snippet (${language})*\n\n` +
-        "```" + language + "\n" +
-        escapeBackticks(code) +
-        "\n```\n\n" +
-        `📤 *Output:*\n\n` +
-        "```text\n" +
-        escapeBackticks(output || "No output") +
-        "\n```";
-
-    } else {
-      return NextResponse.json(
-        { success: false, error: "Invalid type" },
-        { status: 400 }
-      );
+    // ONLY OUTPUT
+    else if (type === "output") {
+      textMessage =
+        "📤 *Output:*\n\n```" +
+        (output || "No output") + "```";
     }
 
-    // --------------------------
-    // BASE64 SAFE ENCODING
-    // --------------------------
-    const encoded = Buffer.from(message, "utf8").toString("base64");
+    // FALLBACK
+    else {
+      textMessage = "Nothing to share.";
+    }
 
-    // --------------------------
-    // SEND TO ZOHO HANDLER
-    // --------------------------
-    const zohoRes = await fetch(ZOHO_URL, {
+    const payload = { text: textMessage };
+
+    // SEND TO ZOHO
+    const zohoRes = await fetch(ZOHO_WEBHOOK_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ text_b64: encoded })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
     });
 
-    const raw = await zohoRes.text();
-
     if (!zohoRes.ok) {
-      return NextResponse.json(
-        { success: false, error: "Zoho handler error", details: raw },
-        { status: 502 }
-      );
+      const err = await zohoRes.text();
+      return NextResponse.json({ error: "Zoho webhook error", details: err }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, zohoReply: raw });
-
+    return NextResponse.json({ success: true });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err?.message ?? String(err) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
