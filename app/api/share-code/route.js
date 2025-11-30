@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-const ZOHO_WEBHOOK_URL =
-  "https://cliq.zoho.com/api/v2/bots/sendtochathandler/incoming?zapikey=1001.050ce4fc4d8d63832f0467057ec12826.78a46d13f334cf2d8ed3559bf612be84";
+const ZOHO_WEBHOOK_URL = process.env.ZOHO_SENDTOCHAT_URL;
+  
 
 export async function POST(req) {
   try {
