@@ -3,11 +3,11 @@
 import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 
-// Monaco Editor (no SSR)
+// Load Monaco (no SSR)
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
 export default function Page() {
-  // DEFAULT CODE TEMPLATES
+  // ---------- DEFAULT CODE ----------
   const defaultCode: Record<string, string> = {
     python: `print("Hello, world!")`,
     javascript: `console.log("Hello, world!");`,
@@ -31,7 +31,7 @@ int main() {
 }`
   };
 
-  // STATE
+  // ---------- STATES ----------
   const [language, setLanguage] = useState("python");
   const [code, setCode] = useState(defaultCode["python"]);
   const [output, setOutput] = useState("Output will appear here...");
@@ -39,7 +39,53 @@ int main() {
   const [pendingLanguage, setPendingLanguage] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // LOAD LAST SAVED SESSION
+  // ---------- LOAD ZOHO CONTEXT (FILE OPENING) ----------
+  useEffect(() => {
+    // Runs once widget loads
+    if (typeof window === "undefined") return;
+
+    const zcl = (window as any).zohocliq;
+    if (!zcl) return;
+
+    zcl.on("widget.load", async (context: any) => {
+      console.log("Widget context:", context);
+
+      if (context?.file_id) {
+        const fileId = context.file_id;
+        const fileName = context.file_name;
+
+        try {
+          // Fetch the file content from Cliq
+          const res = await zcl.request({
+            url: `https://cliq.zoho.com/api/v2/files/${fileId}`,
+            method: "GET",
+            connect: "cliq_oauth_connection"
+          });
+
+          const fileContent = res;
+
+          // Detect language
+          const ext = fileName.split(".").pop();
+          const langMap: any = {
+            py: "python",
+            js: "javascript",
+            java: "java",
+            c: "c",
+            cpp: "c++"
+          };
+
+          setLanguage(langMap[ext] || "python");
+          setCode(fileContent);
+          setOutput("Loaded from Zoho Cliq.");
+        } catch (err) {
+          console.error("File loading failed:", err);
+          setOutput("❌ Failed to load file from Cliq.");
+        }
+      }
+    });
+  }, []);
+
+  // ---------- LOAD SAVED SESSION ----------
   useEffect(() => {
     const savedLang = localStorage.getItem("ps-language");
     const savedCode = localStorage.getItem("ps-code");
@@ -50,7 +96,7 @@ int main() {
     }
   }, []);
 
-  // SAVE FUNCTION
+  // ---------- SAVE ----------
   const saveToLocal = () => {
     localStorage.setItem("ps-language", language);
     localStorage.setItem("ps-code", code);
@@ -59,7 +105,7 @@ int main() {
     setTimeout(() => setShowSuccess(false), 2000);
   };
 
-  // UNSAVED CHANGES CHECK
+  // ---------- UNSAVED CHANGES ----------
   const hasUnsavedChanges = () => {
     return (
       localStorage.getItem("ps-code") !== code ||
@@ -67,7 +113,7 @@ int main() {
     );
   };
 
-  // WARNING BEFORE PAGE CLOSE
+  // Warn on close
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges()) {
@@ -79,19 +125,11 @@ int main() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [code, language]);
 
-  // LANGUAGE CHANGE HANDLER
+  // ---------- LANGUAGE CHANGE ----------
   const handleLanguageChange = (newLang: string) => {
     if (!hasUnsavedChanges()) {
       setLanguage(newLang);
-
-      const savedLang = localStorage.getItem("ps-language");
-      const savedCode = localStorage.getItem("ps-code");
-
-      if (savedLang === newLang && savedCode) {
-        setCode(savedCode);
-      } else {
-        setCode(defaultCode[newLang]);
-      }
+      setCode(defaultCode[newLang]);
       return;
     }
 
@@ -99,7 +137,7 @@ int main() {
     setShowDialog(true);
   };
 
-  // MODAL ACTIONS
+  // ---------- MODAL ----------
   const modalSave = () => {
     saveToLocal();
     if (pendingLanguage) {
@@ -124,7 +162,7 @@ int main() {
     setShowDialog(false);
   };
 
-  // RUN CODE USING BACKEND
+  // ---------- RUN CODE ----------
   const runCode = async () => {
     setOutput("⏳ Running...");
     try {
@@ -135,68 +173,51 @@ int main() {
       });
 
       const data = await res.json();
-
       if (data.error) {
         setOutput("❌ Error:\n" + data.error);
-        return;
+      } else {
+        setOutput(data.output || "(empty output)");
       }
-
-      setOutput(data.output || "(empty output)");
     } catch (err: any) {
-      setOutput("🔥 Error:\n" + (err?.message ?? String(err)));
+      setOutput("🔥 Error:\n" + err.message);
     }
   };
 
-  // SHARE TO ZOHO CHAT (FULL CODE + OUTPUT)
+  // ---------- SHARE ----------
   const shareToChat = async () => {
     const res = await fetch("/api/share-code", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "full",
-        code,
-        language,
-        output,
-      }),
+      body: JSON.stringify({ type: "full", code, language, output })
     });
 
     const data = await res.json();
     alert(data.success ? "Shared successfully!" : "Failed to share!");
   };
 
-  // SHARE ONLY CODE
   const shareCodeToChat = async () => {
     const res = await fetch("/api/share-code", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "code",
-        code,
-        language,
-      }),
+      body: JSON.stringify({ type: "code", code, language })
     });
 
     const data = await res.json();
     alert(data.success ? "Code shared!" : "Failed to share!");
   };
 
-  // SHARE ONLY OUTPUT
   const shareOutputToChat = async () => {
     const res = await fetch("/api/share-code", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "output",
-        output,
-        language,
-      }),
+      body: JSON.stringify({ type: "output", output, language })
     });
 
     const data = await res.json();
     alert(data.success ? "Output shared!" : "Failed to share!");
   };
 
-  // DOWNLOAD CODE
+  // ---------- DOWNLOAD ----------
   const downloadLocal = () => {
     const extMap: Record<string, string> = {
       python: ".py",
@@ -215,29 +236,7 @@ int main() {
     URL.revokeObjectURL(a.href);
   };
 
-  // SHARE LOCAL (NON-ZOHO)
-  const shareCode = async () => {
-    try {
-      if (navigator.share) await navigator.share({ title: "Code", text: code });
-      else {
-        await navigator.clipboard.writeText(code);
-        alert("Code Copied.");
-      }
-    } catch {}
-  };
-
-  const shareOutput = async () => {
-    try {
-      if (navigator.share)
-        await navigator.share({ title: "Output", text: output });
-      else {
-        await navigator.clipboard.writeText(output);
-        alert("Output Copied.");
-      }
-    } catch {}
-  };
-
-  // MONACO EDITOR OPTIONS
+  // ---------- EDITOR OPTIONS ----------
   const editorOptions = {
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
@@ -249,24 +248,20 @@ int main() {
 
   const bgUrl = "/sl_031420_28950_10.jpg";
 
+  // ---------- UI ----------
   return (
     <div className="relative w-screen h-screen text-white">
-
-      {/* BACKGROUND */}
       <div
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: `url('${bgUrl}')`, filter: "brightness(0.35)" }}
       />
       <div className="absolute inset-0 bg-black/40" />
 
-      {/* MAIN */}
       <div className="relative z-10 flex items-center justify-center h-full px-6">
         <div
           className="w-full max-w-6xl rounded-2xl shadow-2xl backdrop-blur-xl bg-white/5 border border-white/10 overflow-hidden"
           style={{ height: "80vh" }}
         >
-
-          {/* TOOLBAR */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <select
               value={language}
@@ -281,32 +276,29 @@ int main() {
             </select>
 
             <div className="flex gap-3">
-              <button onClick={runCode} className="px-4 py-2 bg-blue-600 rounded-md">Run</button>
-              <button onClick={saveToLocal} className="px-4 py-2 bg-gray-700 rounded-md">Save</button>
-              <button onClick={downloadLocal} className="px-4 py-2 bg-gray-700 rounded-md">Save (Download)</button>
+              <button onClick={runCode} className="px-4 py-2 bg-blue-600 rounded-md">
+                Run
+              </button>
+              <button onClick={saveToLocal} className="px-4 py-2 bg-gray-700 rounded-md">
+                Save
+              </button>
+              <button onClick={downloadLocal} className="px-4 py-2 bg-gray-700 rounded-md">
+                Save (Download)
+              </button>
             </div>
           </div>
 
-          {/* GRID LAYOUT */}
           <div
             className="grid grid-cols-12 gap-4 px-6 py-4 flex-1 min-h-0"
             style={{ height: "calc(80vh - 90px)" }}
           >
-
-            {/* EDITOR */}
             <div className="col-span-8 flex flex-col bg-[#0b0f12] rounded-lg p-3 flex-1 min-h-0">
               <div className="text-sm text-white/80 mb-2">Editor</div>
 
               <div className="flex-1 min-h-0 border border-white/10 rounded-md overflow-hidden">
                 <Editor
                   height="100%"
-                  language={
-                    language === "javascript"
-                      ? "javascript"
-                      : language === "c++"
-                      ? "cpp"
-                      : language
-                  }
+                  language={language === "c++" ? "cpp" : language}
                   value={code}
                   onChange={(v) => setCode(v ?? "")}
                   theme="vs-dark"
@@ -315,7 +307,6 @@ int main() {
               </div>
             </div>
 
-            {/* OUTPUT */}
             <div className="col-span-4 flex flex-col">
               <div className="text-sm text-white/80 mb-2">Output</div>
 
@@ -323,7 +314,6 @@ int main() {
                 {output}
               </div>
 
-              {/* SHARE BUTTONS */}
               <div className="mt-4 flex gap-3">
                 <button onClick={shareToChat} className="flex-1 px-3 py-2 bg-indigo-600 rounded-md">
                   Share to chat
@@ -342,33 +332,7 @@ int main() {
         </div>
       </div>
 
-      {/* FOOTER */}
-      <div className="absolute bottom-4 w-full text-center text-xs text-white/60">
-        © 2025 Prime Studio Code Editor
-      </div>
-
-      {/* SAVE CONFIRMATION MODAL */}
-      {showDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white text-black rounded-lg p-6 w-80 shadow-xl">
-            <h2 className="text-lg font-bold mb-4">Do you want to save changes?</h2>
-
-            <div className="flex justify-end gap-2">
-              <button onClick={modalSave} className="bg-blue-600 text-white px-3 py-1 rounded">
-                Save
-              </button>
-              <button onClick={modalDontSave} className="bg-gray-500 text-white px-3 py-1 rounded">
-                Don't Save
-              </button>
-              <button onClick={modalCancel} className="bg-gray-300 px-3 py-1 rounded">
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SAVE SUCCESS POPUP */}
+      {/* Success Popup */}
       {showSuccess && (
         <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
           <div className="bg-green-600 text-white px-6 py-3 rounded-lg shadow-xl animate-fade">
