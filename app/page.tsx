@@ -39,34 +39,30 @@ int main() {
   const [pendingLanguage, setPendingLanguage] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // ---------- LOAD ZOHO CONTEXT (FILE OPENING) ----------
+  // --------------------------------------------------
+  // 🔥 LOAD FILE USING URL PARAMETERS (CORRECT METHOD)
+  // --------------------------------------------------
   useEffect(() => {
-    // Runs once widget loads
     if (typeof window === "undefined") return;
 
-    const zcl = (window as any).zohocliq;
-    if (!zcl) return;
+    const params = new URLSearchParams(window.location.search);
+    const fileId = params.get("file_id");
+    const fileName = params.get("file_name");
 
-    zcl.on("widget.load", async (context: any) => {
-      console.log("Widget context:", context);
-
-      if (context?.file_id) {
-        const fileId = context.file_id;
-        const fileName = context.file_name;
-
+    if (fileId && fileName) {
+      const loadFile = async () => {
         try {
-          // Fetch the file content from Cliq
-          const res = await zcl.request({
-            url: `https://cliq.zoho.com/api/v2/files/${fileId}`,
+          const zcl = (window as any).zohocliq;
+
+          const fileContent = await zcl.request({
+            url: `https://cliq.zoho.com/api/v2/attachments/${fileId}`,
             method: "GET",
             connect: "cliq_oauth_connection"
           });
 
-          const fileContent = res;
-
-          // Detect language
-          const ext = fileName.split(".").pop();
-          const langMap: any = {
+          // Detect language safely
+          const ext = fileName.split(".").pop() || "";
+          const map: Record<string, string> = {
             py: "python",
             js: "javascript",
             java: "java",
@@ -74,15 +70,20 @@ int main() {
             cpp: "c++"
           };
 
-          setLanguage(langMap[ext] || "python");
+          // TS-SAFE FIX 🔥
+          const lang = map[ext] || "python";
+
+          setLanguage(lang);
           setCode(fileContent);
-          setOutput("Loaded from Zoho Cliq.");
+          setOutput("📁 Loaded from Zoho Cliq");
         } catch (err) {
-          console.error("File loading failed:", err);
-          setOutput("❌ Failed to load file from Cliq.");
+          console.error("Attachment loading failed:", err);
+          setOutput("❌ Failed to load file from Zoho Cliq.");
         }
-      }
-    });
+      };
+
+      loadFile();
+    }
   }, []);
 
   // ---------- LOAD SAVED SESSION ----------
@@ -113,7 +114,6 @@ int main() {
     );
   };
 
-  // Warn on close
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges()) {
@@ -248,7 +248,6 @@ int main() {
 
   const bgUrl = "/sl_031420_28950_10.jpg";
 
-  // ---------- UI ----------
   return (
     <div className="relative w-screen h-screen text-white">
       <div
