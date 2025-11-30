@@ -137,7 +137,7 @@ int main() {
     setShowDialog(true);
   };
 
-  // ---------- MODAL ----------
+  // ---------- NOTE PAD STYLE MODAL ----------
   const modalSave = () => {
     saveToLocal();
     if (pendingLanguage) {
